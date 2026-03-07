@@ -283,6 +283,37 @@ def test_github_adapter_raises_rate_limit_error() -> None:
     assert exc.value.reset_at_epoch == 200.0
 
 
+def test_github_adapter_proactively_uses_rate_limit_headers_on_success() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/app/installations/1/access_tokens":
+            return _json_response({"token": "inst-token", "expires_at": "2099-01-01T00:00:00Z"})
+        if path == "/installation/repositories":
+            return httpx.Response(
+                status_code=200,
+                headers={
+                    "x-ratelimit-remaining": "0",
+                    "x-ratelimit-reset": "300",
+                },
+                json={"repositories": []},
+            )
+        raise AssertionError(f"unexpected request {request.method} {path}")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler), base_url="https://api.github.com")
+    adapter = GitHubAppAdapter(
+        app_id="123",
+        private_key_pem="unused",
+        installation_ids=(1,),
+        client=client,
+    )
+    adapter._build_app_jwt = lambda: "app-jwt"  # type: ignore[method-assign]
+    route = RouteConfig(name="default", org_pattern="acme", repo_pattern="*", channel="C1")
+
+    with pytest.raises(GitHubRateLimitError) as exc:
+        adapter.list_pull_requests(route, include_enrichment=False)
+    assert exc.value.reset_at_epoch == 300.0
+
+
 def test_slack_adapter_post_and_update() -> None:
     calls: list[tuple[str, dict]] = []
 
