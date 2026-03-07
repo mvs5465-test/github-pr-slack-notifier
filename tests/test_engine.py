@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timedelta, timezone
 
 from pr_slack_notifier.engine import ReconcileEngine
 from pr_slack_notifier.models import (
@@ -19,11 +20,13 @@ class FakeGitHub:
         self._prs = prs
         self.comment = comment
         self.upserts = []
+        self.comment_calls = 0
 
     def list_pull_requests(self, route):
         return self._prs
 
     def get_bot_state_comment(self, pr):
+        self.comment_calls += 1
         return self.comment
 
     def upsert_bot_state_comment(self, pr, body):
@@ -142,3 +145,56 @@ def test_run_once_skips_upsert_when_planner_has_no_state(monkeypatch) -> None:
 
     assert count == 1
     assert gh.upserts == []
+
+
+def test_run_once_skips_historical_closed_without_state_comment() -> None:
+    pr = PullRequestSnapshot(
+        org="acme",
+        repo="widgets",
+        number=8,
+        title="Closed PR",
+        url="https://example.com/pr/8",
+        author="matt",
+        state=PullRequestState.CLOSED,
+        updated_at=datetime.now(timezone.utc) - timedelta(days=7),
+    )
+    gh = FakeGitHub([pr], comment=None)
+    slack = FakeSlack()
+    route = RouteConfig(name="default", org_pattern="acme", repo_pattern="*", channel="C123")
+
+    engine = ReconcileEngine(github=gh, slack=slack, routes=[route], dry_run=False)
+    count = engine.run_once()
+
+    assert count == 0
+    assert gh.comment_calls == 1
+    assert slack.posts == []
+    assert slack.updates == []
+    assert gh.upserts == []
+
+
+def test_run_once_does_not_skip_when_historical_filter_disabled() -> None:
+    pr = PullRequestSnapshot(
+        org="acme",
+        repo="widgets",
+        number=9,
+        title="Closed PR",
+        url="https://example.com/pr/9",
+        author="matt",
+        state=PullRequestState.CLOSED,
+        updated_at=datetime.now(timezone.utc) - timedelta(days=7),
+    )
+    gh = FakeGitHub([pr], comment=None)
+    slack = FakeSlack()
+    route = RouteConfig(name="default", org_pattern="acme", repo_pattern="*", channel="C123")
+
+    engine = ReconcileEngine(
+        github=gh,
+        slack=slack,
+        routes=[route],
+        disable_historical_closed_prs=False,
+        dry_run=False,
+    )
+    count = engine.run_once()
+
+    assert count == 1
+    assert len(slack.posts) == 1

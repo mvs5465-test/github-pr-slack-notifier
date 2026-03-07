@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 
 
@@ -45,6 +46,7 @@ class PullRequestSnapshot:
     requested_reviewers: tuple[str, ...] = ()
     labels: tuple[str, ...] = ()
     target_branch: str = "main"
+    updated_at: datetime | None = None
 
 
 @dataclass(frozen=True)

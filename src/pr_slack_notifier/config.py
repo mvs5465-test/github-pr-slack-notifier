@@ -14,6 +14,7 @@ class Settings:
     github_installation_ids: tuple[int, ...]
     slack_bot_token: str
     polling_interval_seconds: int
+    disable_historical_closed_prs: bool
     dry_run: bool
     routes: tuple[RouteConfig, ...]
     log_level: str
@@ -60,6 +61,7 @@ def load_settings_from_env() -> Settings:
         github_installation_ids=install_ids,
         slack_bot_token=os.getenv("SLACK_BOT_TOKEN", ""),
         polling_interval_seconds=int(os.getenv("POLL_INTERVAL_SECONDS", "30")),
+        disable_historical_closed_prs=_parse_bool(os.getenv("DISABLE_HISTORICAL_CLOSED_PRS"), default=True),
         dry_run=_parse_bool(os.getenv("DRY_RUN"), default=False),
         routes=_parse_routes(os.getenv("ROUTES_JSON")),
         log_level=os.getenv("LOG_LEVEL", "INFO"),

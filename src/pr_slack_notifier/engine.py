@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Protocol
 
 from opentelemetry import trace
 
-from .models import ActionKind, PullRequestSnapshot, RouteConfig, SlackMessageRef
+from .models import ActionKind, PullRequestSnapshot, PullRequestState, RouteConfig, SlackMessageRef
 from .observability import observe_reconcile_action, observe_reconcile_error, observe_reconcile_pr
 from .plugins import Plugin
 from .reconcile import plan_reconcile
@@ -39,15 +40,29 @@ class ReconcileEngine:
         slack: SlackAdapter,
         routes: list[RouteConfig],
         plugins: tuple[Plugin, ...] = (),
+        disable_historical_closed_prs: bool = True,
         dry_run: bool = False,
     ) -> None:
         self.github = github
         self.slack = slack
         self.routes = routes
         self.plugins = plugins
+        self.disable_historical_closed_prs = disable_historical_closed_prs
         self.dry_run = dry_run
         self.log = logging.getLogger(__name__)
         self._tracer = trace.get_tracer(__name__)
+        self._started_at = datetime.now(timezone.utc)
+
+    def _should_skip_historical_closed(self, pr: PullRequestSnapshot, existing_comment: str | None) -> bool:
+        if not self.disable_historical_closed_prs:
+            return False
+        if existing_comment:
+            return False
+        if pr.state not in {PullRequestState.CLOSED, PullRequestState.MERGED}:
+            return False
+        if pr.updated_at is None:
+            return False
+        return pr.updated_at < self._started_at
 
     def run_once(self) -> int:
         reconciled = 0
@@ -62,7 +77,22 @@ class ReconcileEngine:
                     span.set_attribute("github.repo", pr.repo)
                     span.set_attribute("github.pull_number", pr.number)
                     try:
-                        existing = parse_state_marker(self.github.get_bot_state_comment(pr))
+                        existing_comment = self.github.get_bot_state_comment(pr)
+                        if self._should_skip_historical_closed(pr, existing_comment):
+                            self.log.info(
+                                "reconcile.skip_historical_closed",
+                                extra={
+                                    "route": route.name,
+                                    "org": pr.org,
+                                    "repo": pr.repo,
+                                    "pull_number": pr.number,
+                                    "pr_state": pr.state.value,
+                                    "updated_at": pr.updated_at.isoformat(),
+                                },
+                            )
+                            continue
+
+                        existing = parse_state_marker(existing_comment)
                         plan = plan_reconcile(
                             pr=pr,
                             route=route,

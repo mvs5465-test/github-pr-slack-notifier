@@ -12,6 +12,7 @@ def _settings() -> Settings:
         github_installation_ids=(99,),
         slack_bot_token="xoxb-test",
         polling_interval_seconds=1,
+        disable_historical_closed_prs=True,
         dry_run=True,
         routes=(RouteConfig(org_pattern="acme", repo_pattern="*", channel="C1"),),
         log_level="INFO",
@@ -33,6 +34,7 @@ def test_validate_settings_missing_required(monkeypatch) -> None:
             github_installation_ids=(),
             slack_bot_token="",
             polling_interval_seconds=30,
+            disable_historical_closed_prs=True,
             dry_run=False,
             routes=(),
             log_level="INFO",
@@ -91,3 +93,4 @@ def test_run_forever_runs_single_iteration(monkeypatch) -> None:
     assert state["github"]["app_id"] == "123"
     assert "BEGIN PRIVATE KEY" in state["github"]["private_key_pem"]
     assert state["slack"]["bot_token"] == "xoxb-test"
+    assert state["engine"].kwargs["disable_historical_closed_prs"] is True
