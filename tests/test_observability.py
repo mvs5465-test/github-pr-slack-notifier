@@ -1,7 +1,9 @@
 import json
 import logging
+from datetime import datetime, timezone
 
 import pr_slack_notifier.observability as obs
+from pr_slack_notifier.models import CheckRun, PullRequestSnapshot, PullRequestState
 from pr_slack_notifier.observability import JsonLogFormatter, normalize_operation
 
 
@@ -74,3 +76,50 @@ def test_configure_tracing_idempotent(monkeypatch) -> None:
     assert len(providers) == 1
     obs.configure_tracing(service_name="svc", otlp_endpoint="http://alloy:4318/v1/traces")
     assert len(providers) == 1
+
+
+def test_observe_route_pr_snapshot_sets_route_gauges() -> None:
+    prs = [
+        PullRequestSnapshot(
+            org="acme",
+            repo="widgets",
+            number=1,
+            title="one",
+            url="https://example.com/1",
+            author="dev",
+            state=PullRequestState.OPEN,
+            review_decision="APPROVED",
+            check_runs=(CheckRun(name="ci", status="completed", conclusion="success"),),
+            updated_at=datetime.now(timezone.utc),
+        ),
+        PullRequestSnapshot(
+            org="acme",
+            repo="widgets",
+            number=2,
+            title="two",
+            url="https://example.com/2",
+            author="dev",
+            state=PullRequestState.OPEN,
+            review_decision="CHANGES_REQUESTED",
+            check_runs=(CheckRun(name="ci", status="completed", conclusion="failure"),),
+            updated_at=datetime.now(timezone.utc),
+        ),
+    ]
+
+    obs.observe_route_pr_snapshot("default", prs)
+
+    assert obs.ROUTE_PULL_REQUESTS_TOTAL.labels(route="default")._value.get() == 2
+    assert obs.ROUTE_PULL_REQUESTS_BY_APPROVAL.labels(route="default", approval="approved")._value.get() == 1
+    assert (
+        obs.ROUTE_PULL_REQUESTS_BY_APPROVAL.labels(route="default", approval="changes_requested")._value.get() == 1
+    )
+    assert obs.ROUTE_PULL_REQUESTS_BY_CHECKS.labels(route="default", checks="passed")._value.get() == 1
+    assert obs.ROUTE_PULL_REQUESTS_BY_CHECKS.labels(route="default", checks="failed")._value.get() == 1
+
+
+def test_observe_reconcile_loop_tracks_runs_and_items() -> None:
+    obs.observe_reconcile_loop("lightweight", "ok", 0.25, 3)
+    obs.observe_reconcile_loop("deep", "error", 0.1, None)
+    assert obs.RECONCILE_LOOP_RUNS_TOTAL.labels(loop="lightweight", result="ok")._value.get() >= 1
+    assert obs.RECONCILE_LOOP_RUNS_TOTAL.labels(loop="deep", result="error")._value.get() >= 1
+    assert obs.RECONCILE_LOOP_ITEMS_TOTAL.labels(loop="lightweight")._value.get() >= 3

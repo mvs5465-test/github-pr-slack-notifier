@@ -9,9 +9,14 @@ from typing import Protocol
 from opentelemetry import trace
 
 from .models import ActionKind, PullRequestSnapshot, PullRequestState, RouteConfig, SlackMessageRef
-from .observability import observe_reconcile_action, observe_reconcile_error, observe_reconcile_pr
+from .observability import (
+    observe_reconcile_action,
+    observe_reconcile_error,
+    observe_reconcile_pr,
+    observe_route_pr_snapshot,
+)
 from .plugins import Plugin
-from .reconcile import plan_reconcile
+from .reconcile import derive_status, plan_reconcile
 from .state import parse_state_marker, render_state_marker
 
 
@@ -154,6 +159,7 @@ class ReconcileEngine:
                     return False
 
                 existing = parse_state_marker(existing_comment)
+                status = derive_status(pr)
                 plan = plan_reconcile(
                     pr=pr,
                     route=route,
@@ -204,7 +210,12 @@ class ReconcileEngine:
             finally:
                 span.set_attribute("reconcile.duration_ms", (time.monotonic() - started) * 1000)
 
-        observe_reconcile_pr(route.name)
+        observe_reconcile_pr(
+            route.name,
+            pr.state.value,
+            status.approval.value,
+            status.checks.value,
+        )
         return True
 
     def reconcile_changed(self) -> int:
@@ -226,6 +237,7 @@ class ReconcileEngine:
                 include_enrichment=True,
                 updated_after=None,
             )
+            observe_route_pr_snapshot(route.name, prs)
             prs_index = {(pr.org, pr.repo, pr.number): pr for pr in prs}
             for ref in route_refs:
                 target = prs_index.get((ref.org, ref.repo, ref.number))
@@ -249,6 +261,7 @@ class ReconcileEngine:
             with self._tracer.start_as_current_span("reconcile_route") as span:
                 span.set_attribute("route.name", route.name)
                 prs = self.github.list_pull_requests(route, include_enrichment=True)
+            observe_route_pr_snapshot(route.name, prs)
             for pr in prs:
                 if self._reconcile_pr(route, pr, force_refresh_state=force_refresh_state):
                     reconciled += 1

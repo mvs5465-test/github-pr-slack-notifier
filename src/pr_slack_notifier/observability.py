@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections import Counter as CollectionCounter
 from datetime import UTC, datetime
 
 from opentelemetry import trace
@@ -10,7 +11,10 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from prometheus_client import Counter, Histogram, start_http_server
+from prometheus_client import Counter, Gauge, Histogram, start_http_server
+
+from .models import PullRequestSnapshot
+from .status import derive_approval_state, derive_checks_state
 
 _EXTRA_KEYS = {
     "route",
@@ -50,10 +54,25 @@ RECONCILE_CYCLE_DURATION_SECONDS = Histogram(
     "pr_notifier_reconcile_cycle_duration_seconds",
     "Duration of one reconciliation cycle.",
 )
+RECONCILE_LOOP_DURATION_SECONDS = Histogram(
+    "pr_notifier_reconcile_loop_duration_seconds",
+    "Duration of a reconcile loop execution.",
+    ["loop"],
+)
+RECONCILE_LOOP_RUNS_TOTAL = Counter(
+    "pr_notifier_reconcile_loop_runs_total",
+    "Number of reconcile loop executions by loop and result.",
+    ["loop", "result"],
+)
+RECONCILE_LOOP_ITEMS_TOTAL = Counter(
+    "pr_notifier_reconcile_loop_items_total",
+    "Number of items produced/processed by each reconcile loop.",
+    ["loop"],
+)
 RECONCILE_PR_PROCESSED_TOTAL = Counter(
     "pr_notifier_reconcile_pr_processed_total",
-    "Number of PRs processed by route.",
-    ["route"],
+    "Number of PRs processed by route/state/approval/checks.",
+    ["route", "state", "approval", "checks"],
 )
 RECONCILE_ACTIONS_TOTAL = Counter(
     "pr_notifier_reconcile_actions_total",
@@ -74,6 +93,26 @@ EXTERNAL_API_REQUEST_DURATION_SECONDS = Histogram(
     "pr_notifier_external_api_request_duration_seconds",
     "Outgoing API request duration by system/operation.",
     ["system", "operation"],
+)
+ROUTE_PULL_REQUESTS_TOTAL = Gauge(
+    "pr_notifier_route_pull_requests",
+    "Current PR count seen for a route on latest enriched scan.",
+    ["route"],
+)
+ROUTE_PULL_REQUESTS_BY_STATE = Gauge(
+    "pr_notifier_route_pull_requests_by_state",
+    "Current PR counts by state on latest enriched scan.",
+    ["route", "state"],
+)
+ROUTE_PULL_REQUESTS_BY_APPROVAL = Gauge(
+    "pr_notifier_route_pull_requests_by_approval",
+    "Current PR counts by approval state on latest enriched scan.",
+    ["route", "approval"],
+)
+ROUTE_PULL_REQUESTS_BY_CHECKS = Gauge(
+    "pr_notifier_route_pull_requests_by_checks",
+    "Current PR counts by checks state on latest enriched scan.",
+    ["route", "checks"],
 )
 
 _OTEL_CONFIGURED = False
@@ -122,8 +161,20 @@ def observe_reconcile_cycle(duration_seconds: float) -> None:
     RECONCILE_CYCLE_DURATION_SECONDS.observe(duration_seconds)
 
 
-def observe_reconcile_pr(route_name: str) -> None:
-    RECONCILE_PR_PROCESSED_TOTAL.labels(route=route_name).inc()
+def observe_reconcile_loop(loop_name: str, result: str, duration_seconds: float, items: int | None) -> None:
+    RECONCILE_LOOP_DURATION_SECONDS.labels(loop=loop_name).observe(duration_seconds)
+    RECONCILE_LOOP_RUNS_TOTAL.labels(loop=loop_name, result=result).inc()
+    safe_items = 0 if items is None else max(items, 0)
+    RECONCILE_LOOP_ITEMS_TOTAL.labels(loop=loop_name).inc(safe_items)
+
+
+def observe_reconcile_pr(route_name: str, state: str, approval: str, checks: str) -> None:
+    RECONCILE_PR_PROCESSED_TOTAL.labels(
+        route=route_name,
+        state=state,
+        approval=approval,
+        checks=checks,
+    ).inc()
 
 
 def observe_reconcile_action(kind: str) -> None:
@@ -144,3 +195,24 @@ def observe_api_request(system: str, operation: str, status_code: int, duration_
         system=system,
         operation=normalize_operation(operation),
     ).observe(duration_seconds)
+
+
+def observe_route_pr_snapshot(route_name: str, prs: list[PullRequestSnapshot]) -> None:
+    state_counts: CollectionCounter[str] = CollectionCounter()
+    approval_counts: CollectionCounter[str] = CollectionCounter()
+    checks_counts: CollectionCounter[str] = CollectionCounter()
+    for pr in prs:
+        state_counts[pr.state.value] += 1
+        approval_counts[derive_approval_state(pr).value] += 1
+        checks_counts[derive_checks_state(pr.check_runs).value] += 1
+
+    ROUTE_PULL_REQUESTS_TOTAL.labels(route=route_name).set(len(prs))
+
+    for state in ("open", "closed", "merged"):
+        ROUTE_PULL_REQUESTS_BY_STATE.labels(route=route_name, state=state).set(state_counts.get(state, 0))
+    for approval in ("needs_review", "approved", "changes_requested"):
+        ROUTE_PULL_REQUESTS_BY_APPROVAL.labels(route=route_name, approval=approval).set(
+            approval_counts.get(approval, 0)
+        )
+    for checks in ("no_checks", "pending", "running", "failed", "passed"):
+        ROUTE_PULL_REQUESTS_BY_CHECKS.labels(route=route_name, checks=checks).set(checks_counts.get(checks, 0))
