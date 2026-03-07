@@ -94,6 +94,31 @@ class GitHubAppAdapter:
             )
             span.set_attribute("http.status_code", response.status_code)
         observe_api_request("github", path, response.status_code, time.monotonic() - started)
+
+        remaining: int | None = None
+        remaining_header = response.headers.get("x-ratelimit-remaining")
+        if remaining_header is not None:
+            try:
+                remaining = int(float(remaining_header))
+            except ValueError:
+                remaining = None
+
+        reset_at_epoch: float | None = None
+        reset_header = response.headers.get("x-ratelimit-reset")
+        if reset_header:
+            try:
+                reset_at_epoch = float(reset_header)
+            except ValueError:
+                reset_at_epoch = None
+
+        # Proactive handling: if a successful response reports no remaining quota,
+        # short-circuit now and let the control loop wait until reset.
+        if response.status_code < 400 and remaining is not None and remaining <= 0:
+            raise GitHubRateLimitError(
+                f"GitHub API {method} {path} exhausted rate limit",
+                reset_at_epoch=reset_at_epoch,
+            )
+
         if response.status_code >= 400:
             if response.status_code == 403:
                 body_text = response.text or ""
@@ -102,14 +127,7 @@ class GitHubAppAdapter:
                 except json.JSONDecodeError:
                     payload = {}
                 message = str(payload.get("message", body_text)).lower()
-                if "rate limit" in message:
-                    reset_header = response.headers.get("x-ratelimit-reset")
-                    reset_at_epoch: float | None = None
-                    if reset_header:
-                        try:
-                            reset_at_epoch = float(reset_header)
-                        except ValueError:
-                            reset_at_epoch = None
+                if "rate limit" in message or (remaining is not None and remaining <= 0):
                     raise GitHubRateLimitError(
                         f"GitHub API {method} {path} failed: {response.status_code} {response.text}",
                         reset_at_epoch=reset_at_epoch,

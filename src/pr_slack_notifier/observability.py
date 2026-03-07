@@ -84,6 +84,16 @@ RECONCILE_ERRORS_TOTAL = Counter(
     "Reconcile/runtime errors by stage.",
     ["stage"],
 )
+RATE_LIMIT_EVENTS_TOTAL = Counter(
+    "pr_notifier_rate_limit_events_total",
+    "Rate-limit events observed by stage.",
+    ["stage"],
+)
+RATE_LIMIT_RETRY_SECONDS = Gauge(
+    "pr_notifier_rate_limit_retry_seconds",
+    "Computed retry delay in seconds after rate-limit response.",
+    ["stage"],
+)
 EXTERNAL_API_REQUESTS_TOTAL = Counter(
     "pr_notifier_external_api_requests_total",
     "Outgoing API request count by system/operation/status.",
@@ -183,6 +193,11 @@ def observe_reconcile_action(kind: str) -> None:
 
 def observe_reconcile_error(stage: str) -> None:
     RECONCILE_ERRORS_TOTAL.labels(stage=stage).inc()
+
+
+def observe_rate_limit(stage: str, retry_seconds: int) -> None:
+    RATE_LIMIT_EVENTS_TOTAL.labels(stage=stage).inc()
+    RATE_LIMIT_RETRY_SECONDS.labels(stage=stage).set(max(retry_seconds, 0))
 
 
 def observe_api_request(system: str, operation: str, status_code: int, duration_seconds: float) -> None:

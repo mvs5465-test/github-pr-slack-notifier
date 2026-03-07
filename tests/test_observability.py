@@ -123,3 +123,9 @@ def test_observe_reconcile_loop_tracks_runs_and_items() -> None:
     assert obs.RECONCILE_LOOP_RUNS_TOTAL.labels(loop="lightweight", result="ok")._value.get() >= 1
     assert obs.RECONCILE_LOOP_RUNS_TOTAL.labels(loop="deep", result="error")._value.get() >= 1
     assert obs.RECONCILE_LOOP_ITEMS_TOTAL.labels(loop="lightweight")._value.get() >= 3
+
+
+def test_observe_rate_limit_sets_retry_metric() -> None:
+    obs.observe_rate_limit("cycle", 42)
+    assert obs.RATE_LIMIT_EVENTS_TOTAL.labels(stage="cycle")._value.get() >= 1
+    assert obs.RATE_LIMIT_RETRY_SECONDS.labels(stage="cycle")._value.get() == 42
