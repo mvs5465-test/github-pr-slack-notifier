@@ -46,6 +46,16 @@ spec:
                   key: {{ .Values.secretEnv.slackBotTokenKey | quote }}
             - name: POLL_INTERVAL_SECONDS
               value: {{ .Values.env.POLL_INTERVAL_SECONDS | quote }}
+            - name: DEEP_RECONCILE_INTERVAL_SECONDS
+              value: {{ .Values.env.DEEP_RECONCILE_INTERVAL_SECONDS | quote }}
+            - name: SWEEP_RECONCILE_INTERVAL_SECONDS
+              value: {{ .Values.env.SWEEP_RECONCILE_INTERVAL_SECONDS | quote }}
+            - name: RATE_LIMIT_BACKOFF_SECONDS
+              value: {{ .Values.env.RATE_LIMIT_BACKOFF_SECONDS | quote }}
+            - name: RATE_LIMIT_BACKOFF_MAX_SECONDS
+              value: {{ .Values.env.RATE_LIMIT_BACKOFF_MAX_SECONDS | quote }}
+            - name: ERROR_RETRY_SECONDS
+              value: {{ .Values.env.ERROR_RETRY_SECONDS | quote }}
             - name: DISABLE_HISTORICAL_CLOSED_PRS
               value: {{ .Values.env.DISABLE_HISTORICAL_CLOSED_PRS | quote }}
             - name: DRY_RUN

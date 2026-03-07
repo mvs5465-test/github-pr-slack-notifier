@@ -9,6 +9,11 @@ def test_load_settings_from_env(monkeypatch) -> None:
     monkeypatch.setenv("GITHUB_INSTALLATION_IDS", "100, 101")
     monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-token")
     monkeypatch.setenv("POLL_INTERVAL_SECONDS", "15")
+    monkeypatch.setenv("DEEP_RECONCILE_INTERVAL_SECONDS", "20")
+    monkeypatch.setenv("SWEEP_RECONCILE_INTERVAL_SECONDS", "300")
+    monkeypatch.setenv("RATE_LIMIT_BACKOFF_SECONDS", "45")
+    monkeypatch.setenv("RATE_LIMIT_BACKOFF_MAX_SECONDS", "500")
+    monkeypatch.setenv("ERROR_RETRY_SECONDS", "12")
     monkeypatch.setenv("DISABLE_HISTORICAL_CLOSED_PRS", "true")
     monkeypatch.setenv("DRY_RUN", "true")
     monkeypatch.setenv("LOG_LEVEL", "DEBUG")
@@ -28,6 +33,11 @@ def test_load_settings_from_env(monkeypatch) -> None:
     assert settings.github_installation_ids == (100, 101)
     assert settings.slack_bot_token == "xoxb-token"
     assert settings.polling_interval_seconds == 15
+    assert settings.deep_reconcile_interval_seconds == 20
+    assert settings.sweep_reconcile_interval_seconds == 300
+    assert settings.rate_limit_backoff_seconds == 45
+    assert settings.rate_limit_backoff_max_seconds == 500
+    assert settings.error_retry_seconds == 12
     assert settings.disable_historical_closed_prs is True
     assert settings.dry_run is True
     assert settings.log_level == "DEBUG"
@@ -47,6 +57,11 @@ def test_defaults_when_missing_env(monkeypatch) -> None:
         "GITHUB_INSTALLATION_IDS",
         "SLACK_BOT_TOKEN",
         "POLL_INTERVAL_SECONDS",
+        "DEEP_RECONCILE_INTERVAL_SECONDS",
+        "SWEEP_RECONCILE_INTERVAL_SECONDS",
+        "RATE_LIMIT_BACKOFF_SECONDS",
+        "RATE_LIMIT_BACKOFF_MAX_SECONDS",
+        "ERROR_RETRY_SECONDS",
         "DISABLE_HISTORICAL_CLOSED_PRS",
         "DRY_RUN",
         "LOG_LEVEL",
@@ -65,6 +80,11 @@ def test_defaults_when_missing_env(monkeypatch) -> None:
     assert settings.github_installation_ids == ()
     assert settings.slack_bot_token == ""
     assert settings.polling_interval_seconds == 30
+    assert settings.deep_reconcile_interval_seconds == 30
+    assert settings.sweep_reconcile_interval_seconds == 600
+    assert settings.rate_limit_backoff_seconds == 60
+    assert settings.rate_limit_backoff_max_seconds == 900
+    assert settings.error_retry_seconds == 10
     assert settings.disable_historical_closed_prs is True
     assert settings.dry_run is False
     assert settings.log_level == "INFO"

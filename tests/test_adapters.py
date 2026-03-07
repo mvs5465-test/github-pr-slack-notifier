@@ -1,9 +1,10 @@
 import json
+from datetime import datetime, timezone
 
 import httpx
 import pytest
 
-from pr_slack_notifier.adapters import GitHubAppAdapter, SlackApiAdapter, normalize_private_key
+from pr_slack_notifier.adapters import GitHubAppAdapter, GitHubRateLimitError, SlackApiAdapter, normalize_private_key
 from pr_slack_notifier.models import (
     PullRequestSnapshot,
     PullRequestState,
@@ -96,6 +97,7 @@ def test_github_adapter_lists_prs_and_comments() -> None:
     assert len(prs) == 1
     assert prs[0].repo == "service"
     assert prs[0].author == "matt"
+    assert prs[0].head_sha == "deadbeef"
     assert prs[0].requested_reviewers == ("dev1",)
     assert prs[0].review_decision == "CHANGES_REQUESTED"
 
@@ -149,6 +151,136 @@ def test_github_adapter_upsert_updates_existing_comment() -> None:
     adapter.upsert_bot_state_comment(pr, "<!-- pr-slack-notifier:{\"v\":1,\"x\":2} -->")
 
     assert any(method == "PATCH" and path.endswith("/issues/comments/77") for method, path, _ in calls)
+
+
+def test_github_adapter_comment_cache_and_force_refresh() -> None:
+    calls: list[tuple[str, str]] = []
+    marker = render_state_marker(
+        ReconcileState(
+            message=SlackMessageRef(channel="C1", ts="123.456"),
+            fingerprint="abc",
+        )
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path))
+        path = request.url.path
+        if path == "/app/installations/1/access_tokens":
+            return _json_response({"token": "inst-token", "expires_at": "2099-01-01T00:00:00Z"})
+        if path == "/installation/repositories":
+            return _json_response({"repositories": [{"name": "service", "owner": {"login": "acme"}}]})
+        if path == "/repos/acme/service/issues/7/comments" and request.method == "GET":
+            return _json_response([{"id": 77, "body": marker}])
+        raise AssertionError(f"unexpected request {request.method} {path}")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler), base_url="https://api.github.com")
+    adapter = GitHubAppAdapter(
+        app_id="123",
+        private_key_pem="unused",
+        installation_ids=(1,),
+        client=client,
+    )
+    adapter._build_app_jwt = lambda: "app-jwt"  # type: ignore[method-assign]
+    pr = PullRequestSnapshot(
+        org="acme",
+        repo="service",
+        number=7,
+        title="Title",
+        url="https://github.com/acme/service/pull/7",
+        author="matt",
+        state=PullRequestState.OPEN,
+    )
+
+    assert adapter.get_bot_state_comment(pr) is not None
+    assert adapter.get_bot_state_comment(pr) is not None
+    assert adapter.get_bot_state_comment(pr, force_refresh=True) is not None
+
+    comment_gets = [call for call in calls if call == ("GET", "/repos/acme/service/issues/7/comments")]
+    assert len(comment_gets) == 2
+
+
+def test_github_adapter_lightweight_mode_and_updated_after_filter() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/app/installations/1/access_tokens":
+            return _json_response({"token": "inst-token", "expires_at": "2099-01-01T00:00:00Z"})
+        if path == "/installation/repositories":
+            return _json_response({"repositories": [{"name": "service", "owner": {"login": "acme"}}]})
+        if path == "/repos/acme/service/pulls":
+            return _json_response(
+                [
+                    {
+                        "number": 8,
+                        "title": "New",
+                        "html_url": "https://github.com/acme/service/pull/8",
+                        "state": "open",
+                        "merged_at": None,
+                        "review_decision": "APPROVED",
+                        "user": {"login": "matt"},
+                        "head": {"sha": "newsha"},
+                        "updated_at": "2026-03-07T12:00:00Z",
+                        "base": {"ref": "main"},
+                    },
+                    {
+                        "number": 7,
+                        "title": "Old",
+                        "html_url": "https://github.com/acme/service/pull/7",
+                        "state": "closed",
+                        "merged_at": None,
+                        "review_decision": None,
+                        "user": {"login": "matt"},
+                        "head": {"sha": "oldsha"},
+                        "updated_at": "2026-03-07T10:00:00Z",
+                        "base": {"ref": "main"},
+                    },
+                ]
+            )
+        if path.startswith("/repos/acme/service/pulls/"):
+            raise AssertionError("details endpoint should not be called in lightweight mode")
+        raise AssertionError(f"unexpected request {request.method} {path}")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler), base_url="https://api.github.com")
+    adapter = GitHubAppAdapter(
+        app_id="123",
+        private_key_pem="unused",
+        installation_ids=(1,),
+        client=client,
+    )
+    adapter._build_app_jwt = lambda: "app-jwt"  # type: ignore[method-assign]
+    route = RouteConfig(name="default", org_pattern="acme", repo_pattern="*", channel="C1")
+
+    cutoff = datetime(2026, 3, 7, 11, 0, tzinfo=timezone.utc)
+    prs = adapter.list_pull_requests(route, include_enrichment=False, updated_after=cutoff)
+    assert [pr.number for pr in prs] == [8]
+    assert prs[0].head_sha == "newsha"
+
+
+def test_github_adapter_raises_rate_limit_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/app/installations/1/access_tokens":
+            return _json_response({"token": "inst-token", "expires_at": "2099-01-01T00:00:00Z"})
+        if path == "/installation/repositories":
+            return httpx.Response(
+                status_code=403,
+                headers={"x-ratelimit-reset": "200"},
+                json={"message": "API rate limit exceeded for installation ID 1"},
+            )
+        raise AssertionError(f"unexpected request {request.method} {path}")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler), base_url="https://api.github.com")
+    adapter = GitHubAppAdapter(
+        app_id="123",
+        private_key_pem="unused",
+        installation_ids=(1,),
+        client=client,
+    )
+    adapter._build_app_jwt = lambda: "app-jwt"  # type: ignore[method-assign]
+    route = RouteConfig(name="default", org_pattern="acme", repo_pattern="*", channel="C1")
+
+    with pytest.raises(GitHubRateLimitError) as exc:
+        adapter.list_pull_requests(route, include_enrichment=False)
+    assert exc.value.reset_at_epoch == 200.0
 
 
 def test_slack_adapter_post_and_update() -> None:

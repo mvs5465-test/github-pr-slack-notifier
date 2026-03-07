@@ -41,6 +41,7 @@ class PullRequestSnapshot:
     url: str
     author: str
     state: PullRequestState
+    head_sha: str = ""
     review_decision: str | None = None
     check_runs: tuple[CheckRun, ...] = ()
     requested_reviewers: tuple[str, ...] = ()

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import fnmatch
+import json
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -23,6 +24,20 @@ class _InstallationToken:
 
 class GitHubApiError(RuntimeError):
     pass
+
+
+class GitHubRateLimitError(GitHubApiError):
+    def __init__(self, message: str, reset_at_epoch: float | None = None) -> None:
+        super().__init__(message)
+        self.reset_at_epoch = reset_at_epoch
+
+    def retry_after_seconds(self, now_epoch: float, default_seconds: int, max_seconds: int) -> int:
+        if self.reset_at_epoch is None:
+            return min(default_seconds, max_seconds)
+        retry = int(self.reset_at_epoch - now_epoch) + 1
+        if retry < 1:
+            retry = 1
+        return min(retry, max_seconds)
 
 
 class SlackApiError(RuntimeError):
@@ -46,7 +61,10 @@ class GitHubAppAdapter:
         self._client = client or httpx.Client(timeout=timeout_seconds)
         self._token_cache: dict[int, _InstallationToken] = {}
         self._comment_id_cache: dict[tuple[str, str, int], int] = {}
+        self._comment_body_cache: dict[tuple[str, str, int], str | None] = {}
         self._repo_installation_cache: dict[tuple[str, str], int] = {}
+        self._repo_list_cache: dict[int, tuple[float, list[tuple[str, str]]]] = {}
+        self._repo_list_cache_ttl_seconds = 300
         self._tracer = trace.get_tracer(__name__)
 
     def _build_app_jwt(self) -> str:
@@ -77,6 +95,25 @@ class GitHubAppAdapter:
             span.set_attribute("http.status_code", response.status_code)
         observe_api_request("github", path, response.status_code, time.monotonic() - started)
         if response.status_code >= 400:
+            if response.status_code == 403:
+                body_text = response.text or ""
+                try:
+                    payload = response.json()
+                except json.JSONDecodeError:
+                    payload = {}
+                message = str(payload.get("message", body_text)).lower()
+                if "rate limit" in message:
+                    reset_header = response.headers.get("x-ratelimit-reset")
+                    reset_at_epoch: float | None = None
+                    if reset_header:
+                        try:
+                            reset_at_epoch = float(reset_header)
+                        except ValueError:
+                            reset_at_epoch = None
+                    raise GitHubRateLimitError(
+                        f"GitHub API {method} {path} failed: {response.status_code} {response.text}",
+                        reset_at_epoch=reset_at_epoch,
+                    )
             raise GitHubApiError(f"GitHub API {method} {path} failed: {response.status_code} {response.text}")
         if response.text:
             return response.json()
@@ -106,27 +143,42 @@ class GitHubAppAdapter:
             return PullRequestState.CLOSED
         return PullRequestState.OPEN
 
-    def _iter_matching_repositories(self, route: RouteConfig) -> list[tuple[int, str, str]]:
+    def _iter_matching_repositories(self, route: RouteConfig, force_refresh: bool = False) -> list[tuple[int, str, str]]:
         repos: list[tuple[int, str, str]] = []
+        now = time.time()
         for installation_id in self.installation_ids:
-            token = self._installation_token(installation_id)
-            page = 1
-            while True:
-                data = self._request(
-                    "GET",
-                    f"/installation/repositories?per_page=100&page={page}",
-                    token=token,
-                )
-                page_items = data.get("repositories", [])
-                for repo in page_items:
-                    org = repo["owner"]["login"]
-                    name = repo["name"]
-                    self._repo_installation_cache[(org, name)] = installation_id
-                    if fnmatch.fnmatch(org, route.org_pattern) and fnmatch.fnmatch(name, route.repo_pattern):
-                        repos.append((installation_id, org, name))
-                if len(page_items) < 100:
-                    break
-                page += 1
+            cached = self._repo_list_cache.get(installation_id)
+            repo_pairs: list[tuple[str, str]]
+            if (
+                not force_refresh
+                and cached is not None
+                and now < (cached[0] + self._repo_list_cache_ttl_seconds)
+            ):
+                repo_pairs = cached[1]
+            else:
+                token = self._installation_token(installation_id)
+                repo_pairs = []
+                page = 1
+                while True:
+                    data = self._request(
+                        "GET",
+                        f"/installation/repositories?per_page=100&page={page}",
+                        token=token,
+                    )
+                    page_items = data.get("repositories", [])
+                    for repo in page_items:
+                        org = repo["owner"]["login"]
+                        name = repo["name"]
+                        repo_pairs.append((org, name))
+                        self._repo_installation_cache[(org, name)] = installation_id
+                    if len(page_items) < 100:
+                        break
+                    page += 1
+                self._repo_list_cache[installation_id] = (now, repo_pairs)
+            for org, name in repo_pairs:
+                self._repo_installation_cache[(org, name)] = installation_id
+                if fnmatch.fnmatch(org, route.org_pattern) and fnmatch.fnmatch(name, route.repo_pattern):
+                    repos.append((installation_id, org, name))
         return repos
 
     def _fetch_check_runs(self, token: str, org: str, repo: str, head_sha: str) -> tuple[CheckRun, ...]:
@@ -166,50 +218,103 @@ class GitHubAppAdapter:
                 latest_decision = "CHANGES_REQUESTED"
         return latest_decision
 
-    def list_pull_requests(self, route: RouteConfig) -> list[PullRequestSnapshot]:
+    @staticmethod
+    def _parse_updated_at(value: str | None) -> datetime | None:
+        if not value:
+            return None
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+
+    def _snapshot_from_payload(
+        self,
+        payload: dict[str, Any],
+        *,
+        org: str,
+        repo: str,
+        check_runs: tuple[CheckRun, ...] = (),
+        review_decision: str | None = None,
+    ) -> PullRequestSnapshot:
+        return PullRequestSnapshot(
+            org=org,
+            repo=repo,
+            number=int(payload["number"]),
+            title=str(payload["title"]),
+            url=str(payload["html_url"]),
+            author=str(payload["user"]["login"]),
+            state=self._pr_state(payload.get("merged_at"), str(payload["state"])),
+            head_sha=str(payload.get("head", {}).get("sha", "")),
+            review_decision=review_decision if review_decision is not None else payload.get("review_decision"),
+            check_runs=check_runs,
+            requested_reviewers=tuple(r["login"] for r in payload.get("requested_reviewers", [])),
+            labels=tuple(label["name"] for label in payload.get("labels", [])),
+            target_branch=str(payload.get("base", {}).get("ref", "main")),
+            updated_at=self._parse_updated_at(payload.get("updated_at")),
+        )
+
+    def list_pull_requests(
+        self,
+        route: RouteConfig,
+        *,
+        include_enrichment: bool = True,
+        updated_after: datetime | None = None,
+    ) -> list[PullRequestSnapshot]:
         snapshots: list[PullRequestSnapshot] = []
         for installation_id, org, repo in self._iter_matching_repositories(route):
             token = self._installation_token(installation_id)
-            prs = self._request(
-                "GET",
-                f"/repos/{org}/{repo}/pulls?state=all&sort=updated&direction=desc&per_page=50",
-                token=token,
-            )
-            for item in prs:
-                details = self._request(
+            page = 1
+            stop_paging = False
+            while not stop_paging:
+                prs = self._request(
                     "GET",
-                    f"/repos/{org}/{repo}/pulls/{item['number']}",
+                    f"/repos/{org}/{repo}/pulls?state=all&sort=updated&direction=desc&per_page=50&page={page}",
                     token=token,
                 )
-                review_decision = self._fetch_review_decision(
-                    token=token,
-                    org=org,
-                    repo=repo,
-                    pr_number=details["number"],
-                    review_decision=details.get("review_decision"),
-                )
-                check_runs = self._fetch_check_runs(token, org, repo, details["head"]["sha"])
-                snapshots.append(
-                    PullRequestSnapshot(
+                if not prs:
+                    break
+                for item in prs:
+                    item_updated_at = self._parse_updated_at(item.get("updated_at"))
+                    if (
+                        updated_after is not None
+                        and item_updated_at is not None
+                        and item_updated_at < updated_after
+                    ):
+                        stop_paging = True
+                        break
+
+                    if not include_enrichment:
+                        snapshots.append(self._snapshot_from_payload(item, org=org, repo=repo))
+                        continue
+
+                    details = self._request(
+                        "GET",
+                        f"/repos/{org}/{repo}/pulls/{item['number']}",
+                        token=token,
+                    )
+                    review_decision = self._fetch_review_decision(
+                        token=token,
                         org=org,
                         repo=repo,
-                        number=details["number"],
-                        title=details["title"],
-                        url=details["html_url"],
-                        author=details["user"]["login"],
-                        state=self._pr_state(details.get("merged_at"), details["state"]),
-                        review_decision=review_decision,
-                        check_runs=check_runs,
-                        requested_reviewers=tuple(r["login"] for r in details.get("requested_reviewers", [])),
-                        labels=tuple(label["name"] for label in details.get("labels", [])),
-                        target_branch=details["base"]["ref"],
-                        updated_at=datetime.fromisoformat(details["updated_at"].replace("Z", "+00:00")),
+                        pr_number=int(details["number"]),
+                        review_decision=details.get("review_decision"),
                     )
-                )
+                    check_runs = self._fetch_check_runs(token, org, repo, details["head"]["sha"])
+                    snapshots.append(
+                        self._snapshot_from_payload(
+                            details,
+                            org=org,
+                            repo=repo,
+                            check_runs=check_runs,
+                            review_decision=review_decision,
+                        )
+                    )
+                if len(prs) < 50:
+                    break
+                page += 1
         return snapshots
 
-    def get_bot_state_comment(self, pr: PullRequestSnapshot) -> str | None:
+    def get_bot_state_comment(self, pr: PullRequestSnapshot, *, force_refresh: bool = False) -> str | None:
         key = (pr.org, pr.repo, pr.number)
+        if not force_refresh and key in self._comment_body_cache:
+            return self._comment_body_cache[key]
         token = self._token_for_repo(pr.org, pr.repo)
         comments = self._request(
             "GET",
@@ -219,7 +324,10 @@ class GitHubAppAdapter:
         for comment in comments:
             if parse_state_marker(comment.get("body")) is not None:
                 self._comment_id_cache[key] = int(comment["id"])
-                return comment.get("body")
+                body = comment.get("body")
+                self._comment_body_cache[key] = body
+                return body
+        self._comment_body_cache[key] = None
         return None
 
     def _token_for_repo(self, org: str, repo: str) -> str:
@@ -252,6 +360,7 @@ class GitHubAppAdapter:
 
         if comment_id is not None:
             self._request("PATCH", f"/repos/{pr.org}/{pr.repo}/issues/comments/{comment_id}", token=token, json_body={"body": body})
+            self._comment_body_cache[key] = body
             return
 
         created = self._request(
@@ -261,6 +370,7 @@ class GitHubAppAdapter:
             json_body={"body": body},
         )
         self._comment_id_cache[key] = int(created["id"])
+        self._comment_body_cache[key] = body
 
 
 class SlackApiAdapter:
