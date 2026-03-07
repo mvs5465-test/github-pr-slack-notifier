@@ -1,3 +1,5 @@
+import logging
+
 from pr_slack_notifier.engine import ReconcileEngine
 from pr_slack_notifier.models import (
     Action,
@@ -81,6 +83,21 @@ def test_run_once_dry_run_no_side_effect_calls() -> None:
     assert slack.posts == []
     assert slack.updates == []
     assert gh.upserts == []
+
+
+def test_run_once_noop_logging_works_at_info_level(caplog) -> None:
+    pr = _pr()
+    gh = FakeGitHub([pr], comment=None)
+    slack = FakeSlack()
+    route = RouteConfig(name="default", org_pattern="acme", repo_pattern="*", channel="C123")
+
+    engine = ReconcileEngine(github=gh, slack=slack, routes=[route], dry_run=True)
+    engine.log.setLevel(logging.INFO)
+    with caplog.at_level(logging.INFO, logger="pr_slack_notifier.engine"):
+        count = engine.run_once()
+
+    assert count == 1
+    assert "reconcile.noop reason=dry_run" in caplog.text
 
 
 def test_run_once_updates_existing_message() -> None:
