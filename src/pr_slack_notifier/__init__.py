@@ -1,4 +1,5 @@
 __all__ = [
+    "adapters",
     "app",
     "config",
     "engine",

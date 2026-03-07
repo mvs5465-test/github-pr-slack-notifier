@@ -10,6 +10,7 @@ from .models import RouteConfig
 @dataclass(frozen=True)
 class Settings:
     github_app_id: str
+    github_app_private_key: str
     github_installation_ids: tuple[int, ...]
     slack_bot_token: str
     polling_interval_seconds: int
@@ -49,6 +50,7 @@ def load_settings_from_env() -> Settings:
     )
     return Settings(
         github_app_id=os.getenv("GITHUB_APP_ID", ""),
+        github_app_private_key=os.getenv("GITHUB_APP_PRIVATE_KEY", ""),
         github_installation_ids=install_ids,
         slack_bot_token=os.getenv("SLACK_BOT_TOKEN", ""),
         polling_interval_seconds=int(os.getenv("POLL_INTERVAL_SECONDS", "30")),
