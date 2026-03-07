@@ -34,7 +34,7 @@ class Logger(Protocol):
 
 def compact_state_label(state: str) -> str:
     return {
-        "open": "opened",
+        "open": "open",
         "closed": "closed",
         "merged": "merged",
     }.get(state.lower(), state.lower())
@@ -61,7 +61,7 @@ def _checks_label(state: ChecksState) -> str:
 def _state_label(state: str) -> str:
     compact = compact_state_label(state)
     icon = {
-        "opened": "🟢",
+        "open": "🟢",
         "closed": "⚫",
         "merged": "🟣",
     }.get(compact, "ℹ️")
@@ -78,10 +78,13 @@ def _italic(value: str) -> str:
 
 
 def build_message(pr: PullRequestSnapshot, status: DerivedStatus) -> PlannedMessage:
+    state_text = _state_label(pr.state.value)
+    if pr.state in {PullRequestState.CLOSED, PullRequestState.MERGED}:
+        state_text = _italic(state_text)
     parts = [
-        _italic(_state_label(pr.state.value)),
-        f"*{pr.repo}*",
+        state_text,
         f"<{pr.url}|{_slack_link_label(pr.title)}> by `{pr.author}`",
+        f"*{pr.repo}*",
     ]
     if pr.state not in {PullRequestState.CLOSED, PullRequestState.MERGED}:
         parts.append(_italic(_approval_label(status.approval)))

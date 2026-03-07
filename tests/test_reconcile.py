@@ -42,7 +42,7 @@ def _pr(state: PullRequestState = PullRequestState.OPEN, decision: str | None = 
 
 
 def test_compact_state_label() -> None:
-    assert compact_state_label("open") == "opened"
+    assert compact_state_label("open") == "open"
     assert compact_state_label("merged") == "merged"
 
 
@@ -50,7 +50,7 @@ def test_build_message_contains_required_fields() -> None:
     pr = _pr(decision="APPROVED")
     status = derive_status(pr)
     msg = build_message(pr, status)
-    assert msg.text.startswith("_🟢 opened_ | *widgets* | <https://example.com/pr/42|Add thing> by `matt` |")
+    assert msg.text.startswith("🟢 open | <https://example.com/pr/42|Add thing> by `matt` | *widgets* |")
     assert "|Add thing>" in msg.text
     assert "matt" in msg.text
     assert "*widgets*" in msg.text
@@ -79,7 +79,7 @@ def test_build_message_hides_approval_and_checks_for_closed() -> None:
     pr = _pr(state=PullRequestState.CLOSED, decision="APPROVED")
     status = derive_status(pr)
     msg = build_message(pr, status)
-    assert msg.text.startswith("_⚫ closed_ | *widgets* |")
+    assert msg.text.startswith("_⚫ closed_ | <https://example.com/pr/42|Add thing> by `matt` | *widgets*")
     assert "approved" not in msg.text
     assert "checks" not in msg.text
 
@@ -88,7 +88,7 @@ def test_build_message_hides_approval_and_checks_for_merged() -> None:
     pr = _pr(state=PullRequestState.MERGED, decision="APPROVED")
     status = derive_status(pr)
     msg = build_message(pr, status)
-    assert msg.text.startswith("_🟣 merged_ | *widgets* |")
+    assert msg.text.startswith("_🟣 merged_ | <https://example.com/pr/42|Add thing> by `matt` | *widgets*")
     assert "approved" not in msg.text
     assert "checks" not in msg.text
 

@@ -26,7 +26,7 @@ This is a production-ready scaffold with tested core logic:
 
 Example:
 
-`_🟢 opened_ | *repo* | <https://github.com/org/repo/pull/123|Add feature x> by @author | _✅ approved_ | _✅ passed_`
+`🟢 open | <https://github.com/org/repo/pull/123|Add feature x> by @author | *repo* | _✅ approved_ | _✅ passed_`
 
 ## Configuration
 
