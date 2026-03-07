@@ -170,6 +170,8 @@ def test_slack_adapter_post_and_update() -> None:
 
     assert ts == "111.222"
     assert calls[0][1]["channel"] == "C1"
+    assert calls[0][1]["unfurl_links"] is False
+    assert calls[0][1]["unfurl_media"] is False
     assert calls[1][1]["text"] == "hello2"
 
 

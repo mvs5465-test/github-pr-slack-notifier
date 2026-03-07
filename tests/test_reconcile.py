@@ -50,12 +50,68 @@ def test_build_message_contains_required_fields() -> None:
     pr = _pr(decision="APPROVED")
     status = derive_status(pr)
     msg = build_message(pr, status)
-    assert "[widgets]" in msg.text
-    assert "PR #42" in msg.text
+    assert msg.text.startswith("_🟢 opened_ | *widgets* | <https://example.com/pr/42|Add thing> by `matt` |")
+    assert "|Add thing>" in msg.text
     assert "matt" in msg.text
-    assert "approval: approved" in msg.text
-    assert "checks: no checks" in msg.text
+    assert "*widgets*" in msg.text
+    assert "_✅ approved_" in msg.text
+    assert "_⚪ no checks_" in msg.text
     assert len(msg.fingerprint) == 64
+
+
+def test_build_message_escapes_pipe_in_title() -> None:
+    pr = PullRequestSnapshot(
+        org="acme",
+        repo="widgets",
+        number=42,
+        title="Add | thing",
+        url="https://example.com/pr/42",
+        author="matt",
+        state=PullRequestState.OPEN,
+        review_decision="APPROVED",
+    )
+    status = derive_status(pr)
+    msg = build_message(pr, status)
+    assert "<https://example.com/pr/42|Add ¦ thing>" in msg.text
+
+
+def test_build_message_hides_approval_and_checks_for_closed() -> None:
+    pr = _pr(state=PullRequestState.CLOSED, decision="APPROVED")
+    status = derive_status(pr)
+    msg = build_message(pr, status)
+    assert msg.text.startswith("_⚫ closed_ | *widgets* |")
+    assert "approved" not in msg.text
+    assert "checks" not in msg.text
+
+
+def test_build_message_hides_approval_and_checks_for_merged() -> None:
+    pr = _pr(state=PullRequestState.MERGED, decision="APPROVED")
+    status = derive_status(pr)
+    msg = build_message(pr, status)
+    assert msg.text.startswith("_🟣 merged_ | *widgets* |")
+    assert "approved" not in msg.text
+    assert "checks" not in msg.text
+
+
+def test_build_message_fingerprint_changes_when_title_changes() -> None:
+    pr1 = _pr(decision="APPROVED")
+    pr2 = PullRequestSnapshot(
+        org=pr1.org,
+        repo=pr1.repo,
+        number=pr1.number,
+        title="Different title",
+        url=pr1.url,
+        author=pr1.author,
+        state=pr1.state,
+        review_decision=pr1.review_decision,
+        check_runs=pr1.check_runs,
+        requested_reviewers=pr1.requested_reviewers,
+        labels=pr1.labels,
+        target_branch=pr1.target_branch,
+    )
+    m1 = build_message(pr1, derive_status(pr1))
+    m2 = build_message(pr2, derive_status(pr2))
+    assert m1.fingerprint != m2.fingerprint
 
 
 def test_plan_posts_when_missing_state() -> None:

@@ -282,7 +282,15 @@ class SlackApiAdapter:
         return data
 
     def post_message(self, channel: str, text: str) -> str:
-        data = self._post("chat.postMessage", {"channel": channel, "text": text})
+        data = self._post(
+            "chat.postMessage",
+            {
+                "channel": channel,
+                "text": text,
+                "unfurl_links": False,
+                "unfurl_media": False,
+            },
+        )
         return data["ts"]
 
     def update_message(self, channel: str, ts: str, text: str) -> None:
