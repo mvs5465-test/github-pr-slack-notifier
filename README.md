@@ -15,7 +15,10 @@ This is a production-ready scaffold with tested core logic:
 
 ## Design summary
 
-- Control loop: poll GitHub on a fixed interval, reconcile each PR, and apply minimal actions.
+- Control loop: Argo-style multi-loop reconcile.
+  - fast refresh loop: cheap PR metadata polling
+  - deep reconcile loop: changed PRs only
+  - periodic sweep loop: full self-heal pass
 - Optional webhook path: hook handlers can enqueue immediate reconcile keys; polling remains source of truth.
 - Persisted state: message ref (`channel`, `ts`) + content fingerprint in a bot comment marker.
 - Idempotency: no-op when fingerprint is unchanged.
@@ -36,6 +39,11 @@ Environment variables:
 - `GITHUB_INSTALLATION_IDS` (comma-separated)
 - `SLACK_BOT_TOKEN`
 - `POLL_INTERVAL_SECONDS`
+- `DEEP_RECONCILE_INTERVAL_SECONDS`
+- `SWEEP_RECONCILE_INTERVAL_SECONDS`
+- `RATE_LIMIT_BACKOFF_SECONDS`
+- `RATE_LIMIT_BACKOFF_MAX_SECONDS`
+- `ERROR_RETRY_SECONDS`
 - `DISABLE_HISTORICAL_CLOSED_PRS` (default `true`; skips posting for old closed/merged PRs without existing notifier state)
 - `DRY_RUN`
 - `ROUTES_JSON` example:
@@ -155,6 +163,11 @@ Notes:
   - `GITHUB_INSTALLATION_IDS`
   - `ROUTES_JSON`
   - `POLL_INTERVAL_SECONDS`
+  - `DEEP_RECONCILE_INTERVAL_SECONDS`
+  - `SWEEP_RECONCILE_INTERVAL_SECONDS`
+  - `RATE_LIMIT_BACKOFF_SECONDS`
+  - `RATE_LIMIT_BACKOFF_MAX_SECONDS`
+  - `ERROR_RETRY_SECONDS`
   - `DISABLE_HISTORICAL_CLOSED_PRS`
   - `DRY_RUN`
 - Secret settings are loaded from a Kubernetes Secret referenced by `secretEnv.name`:

@@ -14,6 +14,11 @@ class Settings:
     github_installation_ids: tuple[int, ...]
     slack_bot_token: str
     polling_interval_seconds: int
+    deep_reconcile_interval_seconds: int
+    sweep_reconcile_interval_seconds: int
+    rate_limit_backoff_seconds: int
+    rate_limit_backoff_max_seconds: int
+    error_retry_seconds: int
     disable_historical_closed_prs: bool
     dry_run: bool
     routes: tuple[RouteConfig, ...]
@@ -61,6 +66,11 @@ def load_settings_from_env() -> Settings:
         github_installation_ids=install_ids,
         slack_bot_token=os.getenv("SLACK_BOT_TOKEN", ""),
         polling_interval_seconds=int(os.getenv("POLL_INTERVAL_SECONDS", "30")),
+        deep_reconcile_interval_seconds=int(os.getenv("DEEP_RECONCILE_INTERVAL_SECONDS", "30")),
+        sweep_reconcile_interval_seconds=int(os.getenv("SWEEP_RECONCILE_INTERVAL_SECONDS", "600")),
+        rate_limit_backoff_seconds=int(os.getenv("RATE_LIMIT_BACKOFF_SECONDS", "60")),
+        rate_limit_backoff_max_seconds=int(os.getenv("RATE_LIMIT_BACKOFF_MAX_SECONDS", "900")),
+        error_retry_seconds=int(os.getenv("ERROR_RETRY_SECONDS", "10")),
         disable_historical_closed_prs=_parse_bool(os.getenv("DISABLE_HISTORICAL_CLOSED_PRS"), default=True),
         dry_run=_parse_bool(os.getenv("DRY_RUN"), default=False),
         routes=_parse_routes(os.getenv("ROUTES_JSON")),

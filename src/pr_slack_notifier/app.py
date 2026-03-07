@@ -4,7 +4,7 @@ import logging
 import time
 from opentelemetry import trace
 
-from .adapters import GitHubAppAdapter, SlackApiAdapter, normalize_private_key
+from .adapters import GitHubAppAdapter, GitHubRateLimitError, SlackApiAdapter, normalize_private_key
 from .config import load_settings_from_env
 from .engine import ReconcileEngine
 from .observability import (
@@ -54,15 +54,36 @@ def run_forever() -> None:
         dry_run=settings.dry_run,
     )
     tracer = trace.get_tracer(__name__)
+    next_deep_at = 0.0
+    next_sweep_at = 0.0
+    log = logging.getLogger(__name__)
     while True:
         started = time.monotonic()
         with tracer.start_as_current_span("reconcile_cycle"):
             try:
-                engine.run_once()
+                engine.refresh_lightweight()
+                now = time.monotonic()
+                if now >= next_deep_at:
+                    engine.reconcile_changed()
+                    next_deep_at = now + settings.deep_reconcile_interval_seconds
+                if now >= next_sweep_at:
+                    engine.reconcile_all(force_refresh_state=True)
+                    next_sweep_at = now + settings.sweep_reconcile_interval_seconds
+            except GitHubRateLimitError as err:
+                observe_reconcile_error("cycle_rate_limit")
+                retry_seconds = err.retry_after_seconds(
+                    now_epoch=time.time(),
+                    default_seconds=settings.rate_limit_backoff_seconds,
+                    max_seconds=settings.rate_limit_backoff_max_seconds,
+                )
+                log.warning("reconcile.rate_limited sleeping_seconds=%s", retry_seconds)
+                time.sleep(retry_seconds)
+                continue
             except Exception:
                 observe_reconcile_error("cycle")
-                logging.getLogger(__name__).exception("reconcile_cycle_failed")
-                raise
+                log.exception("reconcile_cycle_failed")
+                time.sleep(settings.error_retry_seconds)
+                continue
             finally:
                 observe_reconcile_cycle(time.monotonic() - started)
         time.sleep(settings.polling_interval_seconds)
