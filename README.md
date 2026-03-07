@@ -39,6 +39,12 @@ Environment variables:
 - `DRY_RUN`
 - `ROUTES_JSON` example:
   - `[ {"name":"acme-main","org_pattern":"acme","repo_pattern":"*","channel":"C123"} ]`
+- `LOG_LEVEL` (default `INFO`)
+- `JSON_LOGS` (default `true`)
+- `METRICS_ENABLED` (default `true`)
+- `METRICS_PORT` (default `9000`, serves Prometheus `/metrics`)
+- `OTEL_SERVICE_NAME` (default `github-pr-slack-notifier`)
+- `OTEL_EXPORTER_OTLP_ENDPOINT` (optional, e.g. `http://alloy.monitoring.svc:4318/v1/traces`)
 
 ## Local development
 

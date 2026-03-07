@@ -26,6 +26,12 @@ env:
   POLL_INTERVAL_SECONDS: "30"
   DRY_RUN: "true"
   ROUTES_JSON: "[]"
+  LOG_LEVEL: "INFO"
+  JSON_LOGS: "true"
+  METRICS_ENABLED: "true"
+  METRICS_PORT: "9000"
+  OTEL_SERVICE_NAME: "github-pr-slack-notifier"
+  OTEL_EXPORTER_OTLP_ENDPOINT: ""
 
 secretEnv:
   name: "github-pr-slack-notifier-secret"
@@ -33,6 +39,17 @@ secretEnv:
   slackBotTokenKey: "SLACK_BOT_TOKEN"
 
 imagePullSecrets: []
+
+service:
+  enabled: true
+  type: ClusterIP
+  port: 9000
+  annotations: {}
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "9000"
+  prometheus.io/path: "/metrics"
 
 nodeSelector: {}
 tolerations: []

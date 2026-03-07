@@ -16,6 +16,12 @@ class Settings:
     polling_interval_seconds: int
     dry_run: bool
     routes: tuple[RouteConfig, ...]
+    log_level: str
+    json_logs: bool
+    metrics_enabled: bool
+    metrics_port: int
+    otel_service_name: str
+    otel_otlp_endpoint: str
 
 
 
@@ -56,4 +62,10 @@ def load_settings_from_env() -> Settings:
         polling_interval_seconds=int(os.getenv("POLL_INTERVAL_SECONDS", "30")),
         dry_run=_parse_bool(os.getenv("DRY_RUN"), default=False),
         routes=_parse_routes(os.getenv("ROUTES_JSON")),
+        log_level=os.getenv("LOG_LEVEL", "INFO"),
+        json_logs=_parse_bool(os.getenv("JSON_LOGS"), default=True),
+        metrics_enabled=_parse_bool(os.getenv("METRICS_ENABLED"), default=True),
+        metrics_port=int(os.getenv("METRICS_PORT", "9000")),
+        otel_service_name=os.getenv("OTEL_SERVICE_NAME", "github-pr-slack-notifier"),
+        otel_otlp_endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
     )
