@@ -131,6 +131,32 @@ class GitHubAppAdapter:
             for item in data.get("check_runs", [])
         )
 
+    def _fetch_review_decision(
+        self,
+        token: str,
+        org: str,
+        repo: str,
+        pr_number: int,
+        review_decision: str | None,
+    ) -> str | None:
+        if review_decision:
+            return review_decision
+
+        reviews = self._request(
+            "GET",
+            f"/repos/{org}/{repo}/pulls/{pr_number}/reviews?per_page=100",
+            token=token,
+        )
+
+        latest_decision: str | None = None
+        for review in reviews:
+            state = str(review.get("state", "")).upper()
+            if state == "APPROVED":
+                latest_decision = "APPROVED"
+            elif state == "CHANGES_REQUESTED":
+                latest_decision = "CHANGES_REQUESTED"
+        return latest_decision
+
     def list_pull_requests(self, route: RouteConfig) -> list[PullRequestSnapshot]:
         snapshots: list[PullRequestSnapshot] = []
         for installation_id, org, repo in self._iter_matching_repositories(route):
@@ -146,6 +172,13 @@ class GitHubAppAdapter:
                     f"/repos/{org}/{repo}/pulls/{item['number']}",
                     token=token,
                 )
+                review_decision = self._fetch_review_decision(
+                    token=token,
+                    org=org,
+                    repo=repo,
+                    pr_number=details["number"],
+                    review_decision=details.get("review_decision"),
+                )
                 check_runs = self._fetch_check_runs(token, org, repo, details["head"]["sha"])
                 snapshots.append(
                     PullRequestSnapshot(
@@ -156,7 +189,7 @@ class GitHubAppAdapter:
                         url=details["html_url"],
                         author=details["user"]["login"],
                         state=self._pr_state(details.get("merged_at"), details["state"]),
-                        review_decision=details.get("review_decision"),
+                        review_decision=review_decision,
                         check_runs=check_runs,
                         requested_reviewers=tuple(r["login"] for r in details.get("requested_reviewers", [])),
                         labels=tuple(label["name"] for label in details.get("labels", [])),
