@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "github-pr-slack-notifier.fullname" . }}
+  labels:
+    app.kubernetes.io/name: {{ include "github-pr-slack-notifier.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "github-pr-slack-notifier.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "github-pr-slack-notifier.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: app
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: GITHUB_APP_ID
+              value: {{ .Values.env.GITHUB_APP_ID | quote }}
+            - name: GITHUB_INSTALLATION_IDS
+              value: {{ .Values.env.GITHUB_INSTALLATION_IDS | quote }}
+            - name: SLACK_BOT_TOKEN
+              value: {{ .Values.env.SLACK_BOT_TOKEN | quote }}
+            - name: POLL_INTERVAL_SECONDS
+              value: {{ .Values.env.POLL_INTERVAL_SECONDS | quote }}
+            - name: DRY_RUN
+              value: {{ .Values.env.DRY_RUN | quote }}
+            - name: ROUTES_JSON
+              value: {{ .Values.env.ROUTES_JSON | quote }}
+          resources:
+{{ toYaml .Values.resources | indent 12 }}
+      nodeSelector:
+{{ toYaml .Values.nodeSelector | indent 8 }}
+      tolerations:
+{{ toYaml .Values.tolerations | indent 8 }}
+      affinity:
+{{ toYaml .Values.affinity | indent 8 }}

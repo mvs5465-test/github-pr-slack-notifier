@@ -1,0 +1,29 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/mvs5465/github-pr-slack-notifier
+  tag: "main"
+  pullPolicy: Always
+
+nameOverride: ""
+fullnameOverride: ""
+
+resources:
+  requests:
+    memory: "128Mi"
+    cpu: "100m"
+  limits:
+    memory: "512Mi"
+    cpu: "500m"
+
+env:
+  GITHUB_APP_ID: ""
+  GITHUB_INSTALLATION_IDS: ""
+  SLACK_BOT_TOKEN: ""
+  POLL_INTERVAL_SECONDS: "30"
+  DRY_RUN: "true"
+  ROUTES_JSON: "[]"
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

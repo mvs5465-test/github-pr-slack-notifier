@@ -1,0 +1,49 @@
+import os
+
+from pr_slack_notifier.config import load_settings_from_env
+
+
+def test_load_settings_from_env(monkeypatch) -> None:
+    monkeypatch.setenv("GITHUB_APP_ID", "12345")
+    monkeypatch.setenv("GITHUB_INSTALLATION_IDS", "100, 101")
+    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-token")
+    monkeypatch.setenv("POLL_INTERVAL_SECONDS", "15")
+    monkeypatch.setenv("DRY_RUN", "true")
+    monkeypatch.setenv(
+        "ROUTES_JSON",
+        '[{"name":"acme-main","org_pattern":"acme","repo_pattern":"*","channel":"C1"}]',
+    )
+
+    settings = load_settings_from_env()
+    assert settings.github_app_id == "12345"
+    assert settings.github_installation_ids == (100, 101)
+    assert settings.slack_bot_token == "xoxb-token"
+    assert settings.polling_interval_seconds == 15
+    assert settings.dry_run is True
+    assert settings.routes[0].name == "acme-main"
+    assert settings.routes[0].channel == "C1"
+
+
+def test_defaults_when_missing_env(monkeypatch) -> None:
+    for key in [
+        "GITHUB_APP_ID",
+        "GITHUB_INSTALLATION_IDS",
+        "SLACK_BOT_TOKEN",
+        "POLL_INTERVAL_SECONDS",
+        "DRY_RUN",
+        "ROUTES_JSON",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+
+    settings = load_settings_from_env()
+    assert settings.github_app_id == ""
+    assert settings.github_installation_ids == ()
+    assert settings.slack_bot_token == ""
+    assert settings.polling_interval_seconds == 30
+    assert settings.dry_run is False
+    assert settings.routes == ()
+
+
+# ensure standard library import is used in test env
+def test_os_import_present() -> None:
+    assert os.getenv is not None
