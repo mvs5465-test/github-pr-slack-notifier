@@ -13,6 +13,7 @@ from .observability import (
     maybe_start_metrics_server,
     observe_reconcile_cycle,
     observe_reconcile_error,
+    observe_reconcile_loop,
 )
 
 
@@ -57,17 +58,31 @@ def run_forever() -> None:
     next_deep_at = 0.0
     next_sweep_at = 0.0
     log = logging.getLogger(__name__)
+
+    def run_loop(loop_name: str, fn) -> int:
+        started_loop = time.monotonic()
+        try:
+            items = fn()
+            observe_reconcile_loop(loop_name, "ok", time.monotonic() - started_loop, items)
+            return items
+        except GitHubRateLimitError:
+            observe_reconcile_loop(loop_name, "rate_limited", time.monotonic() - started_loop, 0)
+            raise
+        except Exception:
+            observe_reconcile_loop(loop_name, "error", time.monotonic() - started_loop, 0)
+            raise
+
     while True:
         started = time.monotonic()
         with tracer.start_as_current_span("reconcile_cycle"):
             try:
-                engine.refresh_lightweight()
+                run_loop("lightweight", engine.refresh_lightweight)
                 now = time.monotonic()
                 if now >= next_deep_at:
-                    engine.reconcile_changed()
+                    run_loop("deep", engine.reconcile_changed)
                     next_deep_at = now + settings.deep_reconcile_interval_seconds
                 if now >= next_sweep_at:
-                    engine.reconcile_all(force_refresh_state=True)
+                    run_loop("sweep", lambda: engine.reconcile_all(force_refresh_state=True))
                     next_sweep_at = now + settings.sweep_reconcile_interval_seconds
             except GitHubRateLimitError as err:
                 observe_reconcile_error("cycle_rate_limit")

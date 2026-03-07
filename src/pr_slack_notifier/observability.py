@@ -54,6 +54,21 @@ RECONCILE_CYCLE_DURATION_SECONDS = Histogram(
     "pr_notifier_reconcile_cycle_duration_seconds",
     "Duration of one reconciliation cycle.",
 )
+RECONCILE_LOOP_DURATION_SECONDS = Histogram(
+    "pr_notifier_reconcile_loop_duration_seconds",
+    "Duration of a reconcile loop execution.",
+    ["loop"],
+)
+RECONCILE_LOOP_RUNS_TOTAL = Counter(
+    "pr_notifier_reconcile_loop_runs_total",
+    "Number of reconcile loop executions by loop and result.",
+    ["loop", "result"],
+)
+RECONCILE_LOOP_ITEMS_TOTAL = Counter(
+    "pr_notifier_reconcile_loop_items_total",
+    "Number of items produced/processed by each reconcile loop.",
+    ["loop"],
+)
 RECONCILE_PR_PROCESSED_TOTAL = Counter(
     "pr_notifier_reconcile_pr_processed_total",
     "Number of PRs processed by route/state/approval/checks.",
@@ -144,6 +159,13 @@ def configure_tracing(service_name: str, otlp_endpoint: str) -> None:
 
 def observe_reconcile_cycle(duration_seconds: float) -> None:
     RECONCILE_CYCLE_DURATION_SECONDS.observe(duration_seconds)
+
+
+def observe_reconcile_loop(loop_name: str, result: str, duration_seconds: float, items: int | None) -> None:
+    RECONCILE_LOOP_DURATION_SECONDS.labels(loop=loop_name).observe(duration_seconds)
+    RECONCILE_LOOP_RUNS_TOTAL.labels(loop=loop_name, result=result).inc()
+    safe_items = 0 if items is None else max(items, 0)
+    RECONCILE_LOOP_ITEMS_TOTAL.labels(loop=loop_name).inc(safe_items)
 
 
 def observe_reconcile_pr(route_name: str, state: str, approval: str, checks: str) -> None:

@@ -115,3 +115,11 @@ def test_observe_route_pr_snapshot_sets_route_gauges() -> None:
     )
     assert obs.ROUTE_PULL_REQUESTS_BY_CHECKS.labels(route="default", checks="passed")._value.get() == 1
     assert obs.ROUTE_PULL_REQUESTS_BY_CHECKS.labels(route="default", checks="failed")._value.get() == 1
+
+
+def test_observe_reconcile_loop_tracks_runs_and_items() -> None:
+    obs.observe_reconcile_loop("lightweight", "ok", 0.25, 3)
+    obs.observe_reconcile_loop("deep", "error", 0.1, None)
+    assert obs.RECONCILE_LOOP_RUNS_TOTAL.labels(loop="lightweight", result="ok")._value.get() >= 1
+    assert obs.RECONCILE_LOOP_RUNS_TOTAL.labels(loop="deep", result="error")._value.get() >= 1
+    assert obs.RECONCILE_LOOP_ITEMS_TOTAL.labels(loop="lightweight")._value.get() >= 3
