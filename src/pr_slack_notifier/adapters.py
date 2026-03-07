@@ -8,8 +8,10 @@ from typing import Any
 
 import httpx
 import jwt
+from opentelemetry import trace
 
 from .models import CheckRun, PullRequestSnapshot, PullRequestState, RouteConfig
+from .observability import observe_api_request
 from .state import parse_state_marker
 
 
@@ -45,6 +47,7 @@ class GitHubAppAdapter:
         self._token_cache: dict[int, _InstallationToken] = {}
         self._comment_id_cache: dict[tuple[str, str, int], int] = {}
         self._repo_installation_cache: dict[tuple[str, str], int] = {}
+        self._tracer = trace.get_tracer(__name__)
 
     def _build_app_jwt(self) -> str:
         now = int(time.time())
@@ -56,17 +59,23 @@ class GitHubAppAdapter:
         return jwt.encode(payload, self.private_key_pem, algorithm="RS256")
 
     def _request(self, method: str, path: str, token: str, json_body: dict[str, Any] | None = None) -> Any:
-        response = self._client.request(
-            method,
-            f"{self.api_base_url}{path}",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-                "User-Agent": "github-pr-slack-notifier",
-            },
-            json=json_body,
-        )
+        started = time.monotonic()
+        with self._tracer.start_as_current_span("github_api_request") as span:
+            span.set_attribute("http.method", method)
+            span.set_attribute("http.target", path)
+            response = self._client.request(
+                method,
+                f"{self.api_base_url}{path}",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                    "User-Agent": "github-pr-slack-notifier",
+                },
+                json=json_body,
+            )
+            span.set_attribute("http.status_code", response.status_code)
+        observe_api_request("github", path, response.status_code, time.monotonic() - started)
         if response.status_code >= 400:
             raise GitHubApiError(f"GitHub API {method} {path} failed: {response.status_code} {response.text}")
         if response.text:
@@ -264,16 +273,22 @@ class SlackApiAdapter:
         self.bot_token = bot_token
         self.api_base_url = api_base_url.rstrip("/")
         self._client = client or httpx.Client(timeout=timeout_seconds)
+        self._tracer = trace.get_tracer(__name__)
 
     def _post(self, method: str, payload: dict[str, Any]) -> dict[str, Any]:
-        response = self._client.post(
-            f"{self.api_base_url}/{method}",
-            headers={
-                "Authorization": f"Bearer {self.bot_token}",
-                "Content-Type": "application/json; charset=utf-8",
-            },
-            json=payload,
-        )
+        started = time.monotonic()
+        with self._tracer.start_as_current_span("slack_api_request") as span:
+            span.set_attribute("rpc.method", method)
+            response = self._client.post(
+                f"{self.api_base_url}/{method}",
+                headers={
+                    "Authorization": f"Bearer {self.bot_token}",
+                    "Content-Type": "application/json; charset=utf-8",
+                },
+                json=payload,
+            )
+            span.set_attribute("http.status_code", response.status_code)
+        observe_api_request("slack", method, response.status_code, time.monotonic() - started)
         if response.status_code >= 400:
             raise SlackApiError(f"Slack API {method} failed: {response.status_code} {response.text}")
         data = response.json()

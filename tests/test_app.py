@@ -14,6 +14,12 @@ def _settings() -> Settings:
         polling_interval_seconds=1,
         dry_run=True,
         routes=(RouteConfig(org_pattern="acme", repo_pattern="*", channel="C1"),),
+        log_level="INFO",
+        json_logs=True,
+        metrics_enabled=False,
+        metrics_port=9000,
+        otel_service_name="github-pr-slack-notifier",
+        otel_otlp_endpoint="",
     )
 
 
@@ -29,6 +35,12 @@ def test_validate_settings_missing_required(monkeypatch) -> None:
             polling_interval_seconds=30,
             dry_run=False,
             routes=(),
+            log_level="INFO",
+            json_logs=True,
+            metrics_enabled=False,
+            metrics_port=9000,
+            otel_service_name="github-pr-slack-notifier",
+            otel_otlp_endpoint="",
         ),
     )
     with pytest.raises(RuntimeError, match="missing required env vars"):
@@ -66,6 +78,9 @@ def test_run_forever_runs_single_iteration(monkeypatch) -> None:
     monkeypatch.setattr(app, "ReconcileEngine", fake_engine_ctor)
     monkeypatch.setattr(app, "GitHubAppAdapter", fake_gh_ctor)
     monkeypatch.setattr(app, "SlackApiAdapter", fake_slack_ctor)
+    monkeypatch.setattr(app, "configure_logging", lambda **_kwargs: None)
+    monkeypatch.setattr(app, "maybe_start_metrics_server", lambda **_kwargs: None)
+    monkeypatch.setattr(app, "configure_tracing", lambda **_kwargs: None)
     monkeypatch.setattr(app.time, "sleep", fake_sleep)
 
     with pytest.raises(RuntimeError, match="stop"):

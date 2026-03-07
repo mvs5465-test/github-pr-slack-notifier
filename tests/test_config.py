@@ -10,6 +10,12 @@ def test_load_settings_from_env(monkeypatch) -> None:
     monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-token")
     monkeypatch.setenv("POLL_INTERVAL_SECONDS", "15")
     monkeypatch.setenv("DRY_RUN", "true")
+    monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+    monkeypatch.setenv("JSON_LOGS", "true")
+    monkeypatch.setenv("METRICS_ENABLED", "true")
+    monkeypatch.setenv("METRICS_PORT", "9191")
+    monkeypatch.setenv("OTEL_SERVICE_NAME", "my-notifier")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://alloy.monitoring.svc:4318/v1/traces")
     monkeypatch.setenv(
         "ROUTES_JSON",
         '[{"name":"acme-main","org_pattern":"acme","repo_pattern":"*","channel":"C1"}]',
@@ -22,6 +28,12 @@ def test_load_settings_from_env(monkeypatch) -> None:
     assert settings.slack_bot_token == "xoxb-token"
     assert settings.polling_interval_seconds == 15
     assert settings.dry_run is True
+    assert settings.log_level == "DEBUG"
+    assert settings.json_logs is True
+    assert settings.metrics_enabled is True
+    assert settings.metrics_port == 9191
+    assert settings.otel_service_name == "my-notifier"
+    assert settings.otel_otlp_endpoint == "http://alloy.monitoring.svc:4318/v1/traces"
     assert settings.routes[0].name == "acme-main"
     assert settings.routes[0].channel == "C1"
 
@@ -34,6 +46,12 @@ def test_defaults_when_missing_env(monkeypatch) -> None:
         "SLACK_BOT_TOKEN",
         "POLL_INTERVAL_SECONDS",
         "DRY_RUN",
+        "LOG_LEVEL",
+        "JSON_LOGS",
+        "METRICS_ENABLED",
+        "METRICS_PORT",
+        "OTEL_SERVICE_NAME",
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
         "ROUTES_JSON",
     ]:
         monkeypatch.delenv(key, raising=False)
@@ -45,6 +63,12 @@ def test_defaults_when_missing_env(monkeypatch) -> None:
     assert settings.slack_bot_token == ""
     assert settings.polling_interval_seconds == 30
     assert settings.dry_run is False
+    assert settings.log_level == "INFO"
+    assert settings.json_logs is True
+    assert settings.metrics_enabled is True
+    assert settings.metrics_port == 9000
+    assert settings.otel_service_name == "github-pr-slack-notifier"
+    assert settings.otel_otlp_endpoint == ""
     assert settings.routes == ()
 
 

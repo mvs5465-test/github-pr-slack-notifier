@@ -16,6 +16,10 @@ spec:
       labels:
         app.kubernetes.io/name: {{ include "github-pr-slack-notifier.name" . }}
         app.kubernetes.io/instance: {{ .Release.Name }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+{{ toYaml . | indent 8 }}
+      {{- end }}
     spec:
       {{- if .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -46,6 +50,22 @@ spec:
               value: {{ .Values.env.DRY_RUN | quote }}
             - name: ROUTES_JSON
               value: {{ .Values.env.ROUTES_JSON | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.env.LOG_LEVEL | quote }}
+            - name: JSON_LOGS
+              value: {{ .Values.env.JSON_LOGS | quote }}
+            - name: METRICS_ENABLED
+              value: {{ .Values.env.METRICS_ENABLED | quote }}
+            - name: METRICS_PORT
+              value: {{ .Values.env.METRICS_PORT | quote }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ .Values.env.OTEL_SERVICE_NAME | quote }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.env.OTEL_EXPORTER_OTLP_ENDPOINT | quote }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.env.METRICS_PORT | int }}
+              protocol: TCP
           resources:
 {{ toYaml .Values.resources | indent 12 }}
       nodeSelector:

@@ -1,0 +1,23 @@
+{{- if .Values.service.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "github-pr-slack-notifier.fullname" . }}
+  labels:
+    app.kubernetes.io/name: {{ include "github-pr-slack-notifier.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  {{- with .Values.service.annotations }}
+  annotations:
+{{ toYaml . | indent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: metrics
+      port: {{ .Values.service.port }}
+      targetPort: metrics
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: {{ include "github-pr-slack-notifier.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
