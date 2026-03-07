@@ -50,6 +50,34 @@ ruff check .
 pytest
 ```
 
+## Live integration harness
+
+An opt-in GitHub API contract test is available at:
+- `tests/integration/test_github_live.py`
+
+Run locally (no coverage gate for this targeted check):
+
+```bash
+INTEGRATION_GITHUB_APP_ID=... \
+INTEGRATION_GITHUB_APP_PRIVATE_KEY=\"$(cat path/to/private-key.pem)\" \
+INTEGRATION_GITHUB_INSTALLATION_IDS=... \
+INTEGRATION_GITHUB_ORG=mvs5465-test \
+INTEGRATION_GITHUB_REPO=github-pr-slack-notifier \
+INTEGRATION_PULL_NUMBER=3 \
+INTEGRATION_EXPECTED_APPROVAL=changes_requested \
+pytest tests/integration/test_github_live.py -m integration --no-cov -q
+```
+
+Or run via Actions workflow:
+- `Integration Live (GitHub)` (`.github/workflows/integration-live.yml`)
+- configure repository secrets:
+  - `INTEGRATION_GITHUB_APP_ID`
+  - `INTEGRATION_GITHUB_APP_PRIVATE_KEY`
+  - `INTEGRATION_GITHUB_INSTALLATION_IDS`
+- configure repository variables:
+  - `INTEGRATION_GITHUB_ORG`
+  - `INTEGRATION_GITHUB_REPO`
+
 ## GitHub App setup (first pass)
 
 1. Create a GitHub App in your org (or personal account first).

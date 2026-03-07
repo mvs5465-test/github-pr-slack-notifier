@@ -1,0 +1,58 @@
+name: Integration Live (GitHub)
+
+on:
+  workflow_dispatch:
+    inputs:
+      pull_number:
+        description: Pull request number to validate
+        required: true
+        type: number
+      expected_approval:
+        description: Expected derived approval state
+        required: true
+        default: needs_review
+        type: choice
+        options:
+          - needs_review
+          - approved
+          - changes_requested
+      expected_checks:
+        description: Optional expected checks state
+        required: false
+        default: ""
+        type: choice
+        options:
+          - ""
+          - no_checks
+          - pending
+          - running
+          - failed
+          - passed
+
+permissions:
+  contents: read
+
+jobs:
+  github-live-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+      - name: Run live integration contract
+        env:
+          INTEGRATION_GITHUB_APP_ID: ${{ secrets.INTEGRATION_GITHUB_APP_ID }}
+          INTEGRATION_GITHUB_APP_PRIVATE_KEY: ${{ secrets.INTEGRATION_GITHUB_APP_PRIVATE_KEY }}
+          INTEGRATION_GITHUB_INSTALLATION_IDS: ${{ secrets.INTEGRATION_GITHUB_INSTALLATION_IDS }}
+          INTEGRATION_GITHUB_ORG: ${{ vars.INTEGRATION_GITHUB_ORG }}
+          INTEGRATION_GITHUB_REPO: ${{ vars.INTEGRATION_GITHUB_REPO }}
+          INTEGRATION_PULL_NUMBER: ${{ inputs.pull_number }}
+          INTEGRATION_EXPECTED_APPROVAL: ${{ inputs.expected_approval }}
+          INTEGRATION_EXPECTED_CHECKS: ${{ inputs.expected_checks }}
+        run: |
+          pytest tests/integration/test_github_live.py -m integration --no-cov -q
