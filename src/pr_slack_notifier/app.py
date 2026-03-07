@@ -14,6 +14,7 @@ from .observability import (
     observe_reconcile_cycle,
     observe_reconcile_error,
     observe_reconcile_loop,
+    observe_rate_limit,
 )
 
 
@@ -91,6 +92,7 @@ def run_forever() -> None:
                     default_seconds=settings.rate_limit_backoff_seconds,
                     max_seconds=settings.rate_limit_backoff_max_seconds,
                 )
+                observe_rate_limit("cycle", retry_seconds)
                 log.warning("reconcile.rate_limited sleeping_seconds=%s", retry_seconds)
                 time.sleep(retry_seconds)
                 continue
