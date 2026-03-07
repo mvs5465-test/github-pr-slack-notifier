@@ -26,7 +26,7 @@ This is a production-ready scaffold with tested core logic:
 
 Example:
 
-`_🟢 opened_ | *repo* | <https://github.com/org/repo/pull/123|Add feature x> by @author | _✅ approved_ | _✅ passed_`
+`🟢 open | <https://github.com/org/repo/pull/123|Add feature x> by @author | *repo* | _✅ approved_ | _✅ passed_`
 
 ## Configuration
 
@@ -36,6 +36,7 @@ Environment variables:
 - `GITHUB_INSTALLATION_IDS` (comma-separated)
 - `SLACK_BOT_TOKEN`
 - `POLL_INTERVAL_SECONDS`
+- `DISABLE_HISTORICAL_CLOSED_PRS` (default `true`; skips posting for old closed/merged PRs without existing notifier state)
 - `DRY_RUN`
 - `ROUTES_JSON` example:
   - `[ {"name":"acme-main","org_pattern":"acme","repo_pattern":"*","channel":"C123"} ]`
@@ -154,6 +155,7 @@ Notes:
   - `GITHUB_INSTALLATION_IDS`
   - `ROUTES_JSON`
   - `POLL_INTERVAL_SECONDS`
+  - `DISABLE_HISTORICAL_CLOSED_PRS`
   - `DRY_RUN`
 - Secret settings are loaded from a Kubernetes Secret referenced by `secretEnv.name`:
   - key `GITHUB_APP_PRIVATE_KEY`

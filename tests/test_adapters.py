@@ -56,6 +56,7 @@ def test_github_adapter_lists_prs_and_comments() -> None:
                     "review_decision": None,
                     "user": {"login": "matt"},
                     "head": {"sha": "deadbeef"},
+                    "updated_at": "2026-01-01T00:00:00Z",
                     "base": {"ref": "main"},
                     "requested_reviewers": [{"login": "dev1"}],
                     "labels": [{"name": "safe"}],

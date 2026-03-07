@@ -46,6 +46,8 @@ spec:
                   key: {{ .Values.secretEnv.slackBotTokenKey | quote }}
             - name: POLL_INTERVAL_SECONDS
               value: {{ .Values.env.POLL_INTERVAL_SECONDS | quote }}
+            - name: DISABLE_HISTORICAL_CLOSED_PRS
+              value: {{ .Values.env.DISABLE_HISTORICAL_CLOSED_PRS | quote }}
             - name: DRY_RUN
               value: {{ .Values.env.DRY_RUN | quote }}
             - name: ROUTES_JSON

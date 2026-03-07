@@ -203,6 +203,7 @@ class GitHubAppAdapter:
                         requested_reviewers=tuple(r["login"] for r in details.get("requested_reviewers", [])),
                         labels=tuple(label["name"] for label in details.get("labels", [])),
                         target_branch=details["base"]["ref"],
+                        updated_at=datetime.fromisoformat(details["updated_at"].replace("Z", "+00:00")),
                     )
                 )
         return snapshots
