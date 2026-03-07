@@ -1,7 +1,7 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/mvs5465/github-pr-slack-notifier
+  repository: ghcr.io/mvs5465-test/github-pr-slack-notifier
   tag: "main"
   pullPolicy: Always
 
@@ -19,10 +19,14 @@ resources:
 env:
   GITHUB_APP_ID: ""
   GITHUB_INSTALLATION_IDS: ""
-  SLACK_BOT_TOKEN: ""
   POLL_INTERVAL_SECONDS: "30"
   DRY_RUN: "true"
   ROUTES_JSON: "[]"
+
+secretEnv:
+  name: "github-pr-slack-notifier-secret"
+  githubAppPrivateKeyKey: "GITHUB_APP_PRIVATE_KEY"
+  slackBotTokenKey: "SLACK_BOT_TOKEN"
 
 nodeSelector: {}
 tolerations: []

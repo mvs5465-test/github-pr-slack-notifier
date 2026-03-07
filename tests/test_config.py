@@ -5,6 +5,7 @@ from pr_slack_notifier.config import load_settings_from_env
 
 def test_load_settings_from_env(monkeypatch) -> None:
     monkeypatch.setenv("GITHUB_APP_ID", "12345")
+    monkeypatch.setenv("GITHUB_APP_PRIVATE_KEY", "pem")
     monkeypatch.setenv("GITHUB_INSTALLATION_IDS", "100, 101")
     monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-token")
     monkeypatch.setenv("POLL_INTERVAL_SECONDS", "15")
@@ -16,6 +17,7 @@ def test_load_settings_from_env(monkeypatch) -> None:
 
     settings = load_settings_from_env()
     assert settings.github_app_id == "12345"
+    assert settings.github_app_private_key == "pem"
     assert settings.github_installation_ids == (100, 101)
     assert settings.slack_bot_token == "xoxb-token"
     assert settings.polling_interval_seconds == 15
@@ -27,6 +29,7 @@ def test_load_settings_from_env(monkeypatch) -> None:
 def test_defaults_when_missing_env(monkeypatch) -> None:
     for key in [
         "GITHUB_APP_ID",
+        "GITHUB_APP_PRIVATE_KEY",
         "GITHUB_INSTALLATION_IDS",
         "SLACK_BOT_TOKEN",
         "POLL_INTERVAL_SECONDS",
@@ -37,6 +40,7 @@ def test_defaults_when_missing_env(monkeypatch) -> None:
 
     settings = load_settings_from_env()
     assert settings.github_app_id == ""
+    assert settings.github_app_private_key == ""
     assert settings.github_installation_ids == ()
     assert settings.slack_bot_token == ""
     assert settings.polling_interval_seconds == 30

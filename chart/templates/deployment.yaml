@@ -26,8 +26,16 @@ spec:
               value: {{ .Values.env.GITHUB_APP_ID | quote }}
             - name: GITHUB_INSTALLATION_IDS
               value: {{ .Values.env.GITHUB_INSTALLATION_IDS | quote }}
+            - name: GITHUB_APP_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretEnv.name | quote }}
+                  key: {{ .Values.secretEnv.githubAppPrivateKeyKey | quote }}
             - name: SLACK_BOT_TOKEN
-              value: {{ .Values.env.SLACK_BOT_TOKEN | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretEnv.name | quote }}
+                  key: {{ .Values.secretEnv.slackBotTokenKey | quote }}
             - name: POLL_INTERVAL_SECONDS
               value: {{ .Values.env.POLL_INTERVAL_SECONDS | quote }}
             - name: DRY_RUN

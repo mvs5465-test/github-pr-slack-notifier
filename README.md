@@ -10,9 +10,8 @@ This is a production-ready scaffold with tested core logic:
 - dry-run/evaluation mode
 - multi-route channel mapping (org/repo pattern to Slack channel)
 - plugin contract (`on_plan`) and sample behavior in tests
+- GitHub App + Slack API adapters
 - Docker + GitHub Actions + Helm chart
-
-GitHub and Slack API adapters are intentionally left as explicit integration boundaries for the next slice.
 
 ## Design summary
 
@@ -33,6 +32,7 @@ Example:
 
 Environment variables:
 - `GITHUB_APP_ID`
+- `GITHUB_APP_PRIVATE_KEY`
 - `GITHUB_INSTALLATION_IDS` (comma-separated)
 - `SLACK_BOT_TOKEN`
 - `POLL_INTERVAL_SECONDS`
@@ -75,6 +75,18 @@ pytest
    - `groups:read` (optional for private channels)
 3. Install app to workspace and invite bot to target channels.
 4. Store bot token in k8s secret.
+
+## Helm secret wiring
+
+- Non-secret settings should be passed via chart values (`env.*`):
+  - `GITHUB_APP_ID`
+  - `GITHUB_INSTALLATION_IDS`
+  - `ROUTES_JSON`
+  - `POLL_INTERVAL_SECONDS`
+  - `DRY_RUN`
+- Secret settings are loaded from a Kubernetes Secret referenced by `secretEnv.name`:
+  - key `GITHUB_APP_PRIVATE_KEY`
+  - key `SLACK_BOT_TOKEN`
 
 ## Reliability/testing goals
 
