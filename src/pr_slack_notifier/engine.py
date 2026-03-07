@@ -80,7 +80,11 @@ class ReconcileEngine:
                         )
                         self.github.upsert_bot_state_comment(pr, render_state_marker(state))
                     else:
-                        self.log.info("reconcile.noop", reason=action.reason, payload=action.payload)
+                        self.log.info(
+                            "reconcile.noop reason=%s payload=%s",
+                            action.reason,
+                            action.payload,
+                        )
 
                 reconciled += 1
         return reconciled
