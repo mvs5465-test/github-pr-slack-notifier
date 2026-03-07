@@ -8,6 +8,10 @@ image:
 nameOverride: ""
 fullnameOverride: ""
 
+namespace:
+  create: true
+  name: "github-pr-slack-notifier"
+
 resources:
   requests:
     memory: "128Mi"
