@@ -14,7 +14,7 @@ def test_load_settings_from_env(monkeypatch) -> None:
     monkeypatch.setenv("RATE_LIMIT_BACKOFF_SECONDS", "45")
     monkeypatch.setenv("RATE_LIMIT_BACKOFF_MAX_SECONDS", "500")
     monkeypatch.setenv("ERROR_RETRY_SECONDS", "12")
-    monkeypatch.setenv("DISABLE_HISTORICAL_CLOSED_PRS", "true")
+    monkeypatch.setenv("ENABLE_HISTORICAL_CLOSED_PRS", "false")
     monkeypatch.setenv("DRY_RUN", "true")
     monkeypatch.setenv("LOG_LEVEL", "DEBUG")
     monkeypatch.setenv("JSON_LOGS", "true")
@@ -38,7 +38,7 @@ def test_load_settings_from_env(monkeypatch) -> None:
     assert settings.rate_limit_backoff_seconds == 45
     assert settings.rate_limit_backoff_max_seconds == 500
     assert settings.error_retry_seconds == 12
-    assert settings.disable_historical_closed_prs is True
+    assert settings.enable_historical_closed_prs is False
     assert settings.dry_run is True
     assert settings.log_level == "DEBUG"
     assert settings.json_logs is True
@@ -62,7 +62,7 @@ def test_defaults_when_missing_env(monkeypatch) -> None:
         "RATE_LIMIT_BACKOFF_SECONDS",
         "RATE_LIMIT_BACKOFF_MAX_SECONDS",
         "ERROR_RETRY_SECONDS",
-        "DISABLE_HISTORICAL_CLOSED_PRS",
+        "ENABLE_HISTORICAL_CLOSED_PRS",
         "DRY_RUN",
         "LOG_LEVEL",
         "JSON_LOGS",
@@ -85,7 +85,7 @@ def test_defaults_when_missing_env(monkeypatch) -> None:
     assert settings.rate_limit_backoff_seconds == 60
     assert settings.rate_limit_backoff_max_seconds == 900
     assert settings.error_retry_seconds == 10
-    assert settings.disable_historical_closed_prs is True
+    assert settings.enable_historical_closed_prs is False
     assert settings.dry_run is False
     assert settings.log_level == "INFO"
     assert settings.json_logs is True

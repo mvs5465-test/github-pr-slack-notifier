@@ -67,7 +67,7 @@ class ReconcileEngine:
         slack: SlackAdapter,
         routes: list[RouteConfig],
         plugins: tuple[Plugin, ...] = (),
-        disable_historical_closed_prs: bool = True,
+        enable_historical_closed_prs: bool = False,
         dry_run: bool = False,
     ) -> None:
         self.github = github
@@ -75,7 +75,7 @@ class ReconcileEngine:
         self.routes = routes
         self._routes_by_name = {route.name: route for route in routes}
         self.plugins = plugins
-        self.disable_historical_closed_prs = disable_historical_closed_prs
+        self.enable_historical_closed_prs = enable_historical_closed_prs
         self.dry_run = dry_run
         self.log = logging.getLogger(__name__)
         self._tracer = trace.get_tracer(__name__)
@@ -101,7 +101,7 @@ class ReconcileEngine:
         return current
 
     def _should_skip_historical_closed(self, pr: PullRequestSnapshot, existing_comment: str | None) -> bool:
-        if not self.disable_historical_closed_prs:
+        if self.enable_historical_closed_prs:
             return False
         if existing_comment:
             return False

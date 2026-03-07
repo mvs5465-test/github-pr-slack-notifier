@@ -44,7 +44,7 @@ Environment variables:
 - `RATE_LIMIT_BACKOFF_SECONDS`
 - `RATE_LIMIT_BACKOFF_MAX_SECONDS`
 - `ERROR_RETRY_SECONDS`
-- `DISABLE_HISTORICAL_CLOSED_PRS` (default `true`; skips posting for old closed/merged PRs without existing notifier state)
+- `ENABLE_HISTORICAL_CLOSED_PRS` (default `false`; when `true`, allows posting for old closed/merged PRs without existing notifier state)
 - `DRY_RUN`
 - `ROUTES_JSON` example:
   - `[ {"name":"acme-main","org_pattern":"acme","repo_pattern":"*","channel":"C123"} ]`
@@ -168,7 +168,7 @@ Notes:
   - `RATE_LIMIT_BACKOFF_SECONDS`
   - `RATE_LIMIT_BACKOFF_MAX_SECONDS`
   - `ERROR_RETRY_SECONDS`
-  - `DISABLE_HISTORICAL_CLOSED_PRS`
+  - `ENABLE_HISTORICAL_CLOSED_PRS`
   - `DRY_RUN`
 - Secret settings are loaded from a Kubernetes Secret referenced by `secretEnv.name`:
   - key `GITHUB_APP_PRIVATE_KEY`

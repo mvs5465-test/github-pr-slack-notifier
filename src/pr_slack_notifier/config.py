@@ -19,7 +19,7 @@ class Settings:
     rate_limit_backoff_seconds: int
     rate_limit_backoff_max_seconds: int
     error_retry_seconds: int
-    disable_historical_closed_prs: bool
+    enable_historical_closed_prs: bool
     dry_run: bool
     routes: tuple[RouteConfig, ...]
     log_level: str
@@ -71,7 +71,7 @@ def load_settings_from_env() -> Settings:
         rate_limit_backoff_seconds=int(os.getenv("RATE_LIMIT_BACKOFF_SECONDS", "60")),
         rate_limit_backoff_max_seconds=int(os.getenv("RATE_LIMIT_BACKOFF_MAX_SECONDS", "900")),
         error_retry_seconds=int(os.getenv("ERROR_RETRY_SECONDS", "10")),
-        disable_historical_closed_prs=_parse_bool(os.getenv("DISABLE_HISTORICAL_CLOSED_PRS"), default=True),
+        enable_historical_closed_prs=_parse_bool(os.getenv("ENABLE_HISTORICAL_CLOSED_PRS"), default=False),
         dry_run=_parse_bool(os.getenv("DRY_RUN"), default=False),
         routes=_parse_routes(os.getenv("ROUTES_JSON")),
         log_level=os.getenv("LOG_LEVEL", "INFO"),

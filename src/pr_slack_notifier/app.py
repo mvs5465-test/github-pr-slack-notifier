@@ -52,7 +52,7 @@ def run_forever() -> None:
         github=github,
         slack=slack,
         routes=list(settings.routes),
-        disable_historical_closed_prs=settings.disable_historical_closed_prs,
+        enable_historical_closed_prs=settings.enable_historical_closed_prs,
         dry_run=settings.dry_run,
     )
     tracer = trace.get_tracer(__name__)
