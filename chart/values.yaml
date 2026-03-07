@@ -32,6 +32,8 @@ secretEnv:
   githubAppPrivateKeyKey: "GITHUB_APP_PRIVATE_KEY"
   slackBotTokenKey: "SLACK_BOT_TOKEN"
 
+imagePullSecrets: []
+
 nodeSelector: {}
 tolerations: []
 affinity: {}

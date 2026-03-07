@@ -17,6 +17,10 @@ spec:
         app.kubernetes.io/name: {{ include "github-pr-slack-notifier.name" . }}
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+{{ toYaml .Values.imagePullSecrets | indent 8 }}
+      {{- end }}
       containers:
         - name: app
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
