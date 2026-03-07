@@ -56,8 +56,8 @@ spec:
               value: {{ .Values.env.RATE_LIMIT_BACKOFF_MAX_SECONDS | quote }}
             - name: ERROR_RETRY_SECONDS
               value: {{ .Values.env.ERROR_RETRY_SECONDS | quote }}
-            - name: DISABLE_HISTORICAL_CLOSED_PRS
-              value: {{ .Values.env.DISABLE_HISTORICAL_CLOSED_PRS | quote }}
+            - name: ENABLE_HISTORICAL_CLOSED_PRS
+              value: {{ .Values.env.ENABLE_HISTORICAL_CLOSED_PRS | quote }}
             - name: DRY_RUN
               value: {{ .Values.env.DRY_RUN | quote }}
             - name: ROUTES_JSON
