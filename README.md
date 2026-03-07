@@ -26,7 +26,7 @@ This is a production-ready scaffold with tested core logic:
 
 Example:
 
-`[repo] <https://github.com/org/repo/pull/123|PR #123> by @author | state: opened | approval: approved | checks: passed`
+`_🟢 opened_ | *repo* | <https://github.com/org/repo/pull/123|Add feature x> by @author | _✅ approved_ | _✅ passed_`
 
 ## Configuration
 
@@ -49,6 +49,71 @@ pip install -e .[dev]
 ruff check .
 pytest
 ```
+
+## Live integration harness
+
+An opt-in GitHub API contract test is available at:
+- `tests/integration/test_github_live.py`
+
+Run locally (no coverage gate for this targeted check):
+
+```bash
+INTEGRATION_GITHUB_APP_ID=... \
+INTEGRATION_GITHUB_APP_PRIVATE_KEY=\"$(cat path/to/private-key.pem)\" \
+INTEGRATION_GITHUB_INSTALLATION_IDS=... \
+INTEGRATION_GITHUB_ORG=mvs5465-test \
+INTEGRATION_GITHUB_REPO=github-pr-slack-notifier \
+INTEGRATION_PULL_NUMBER=3 \
+INTEGRATION_EXPECTED_APPROVAL=changes_requested \
+pytest tests/integration/test_github_live.py -m integration --no-cov -q
+```
+
+Optional Slack contract check (post + update) in your test channel:
+
+```bash
+INTEGRATION_SLACK_BOT_TOKEN=\"$(cat ~/.secrets/github-pr-slack-notifier/slack_bot_token)\" \
+INTEGRATION_SLACK_CHANNEL=C0AJRCM5J8P \
+pytest tests/integration/test_github_live.py -m integration --no-cov -q
+```
+
+Stateful reconcile contract check (posts/updates + hidden comment marker persistence):
+
+```bash
+INTEGRATION_GITHUB_APP_ID=... \
+INTEGRATION_GITHUB_APP_PRIVATE_KEY=\"$(cat path/to/private-key.pem)\" \
+INTEGRATION_GITHUB_INSTALLATION_IDS=... \
+INTEGRATION_GITHUB_ORG=mvs5465-test \
+INTEGRATION_GITHUB_REPO=github-pr-slack-notifier \
+INTEGRATION_PULL_NUMBER=3 \
+INTEGRATION_SLACK_BOT_TOKEN=\"$(cat ~/.secrets/github-pr-slack-notifier/slack_bot_token)\" \
+INTEGRATION_SLACK_CHANNEL=C0AJRCM5J8P \
+INTEGRATION_ENABLE_STATEFUL_RECONCILE_TEST=true \
+pytest tests/integration/test_github_live.py -m integration --no-cov -q
+```
+
+This stateful test mutates live resources (posts/updates Slack + updates bot comment on PR).
+
+End-to-end polling SLA probe (uses deployed poller, optionally triggers review-bot workflow, then times Slack convergence):
+
+```bash
+INTEGRATION_GITHUB_APP_ID=... \
+INTEGRATION_GITHUB_APP_PRIVATE_KEY=\"$(cat path/to/private-key.pem)\" \
+INTEGRATION_GITHUB_INSTALLATION_IDS=... \
+INTEGRATION_GITHUB_ORG=mvs5465-test \
+INTEGRATION_GITHUB_REPO=github-pr-slack-notifier \
+INTEGRATION_PULL_NUMBER=3 \
+INTEGRATION_SLACK_BOT_TOKEN=\"$(cat ~/.secrets/github-pr-slack-notifier/slack_bot_token)\" \
+INTEGRATION_ENABLE_E2E_POLLING_TEST=true \
+INTEGRATION_GITHUB_WORKFLOW_TOKEN=ghp_... \
+INTEGRATION_E2E_REVIEW_ACTION=REQUEST_CHANGES \
+INTEGRATION_E2E_TIMEOUT_SECONDS=45 \
+pytest tests/integration/test_github_live.py -m e2e_polling --no-cov -q
+```
+
+Notes:
+- This test dispatches `.github/workflows/pr-review-bot.yml` by default.
+- Slack history read is required (`channels:history` and/or `groups:history`) to poll message text.
+- The PR must already have a notifier state marker comment so Slack message `ts` is known.
 
 ## GitHub App setup (first pass)
 

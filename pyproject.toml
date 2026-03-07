@@ -26,3 +26,7 @@ packages = ["src/pr_slack_notifier"]
 pythonpath = ["src"]
 testpaths = ["tests"]
 addopts = "--cov=pr_slack_notifier --cov-report=term-missing --cov-fail-under=90"
+markers = [
+  "integration: live integration tests that require real external API credentials",
+  "e2e_polling: live end-to-end polling latency test against deployed reconciler",
+]

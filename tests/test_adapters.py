@@ -53,13 +53,21 @@ def test_github_adapter_lists_prs_and_comments() -> None:
                     "html_url": "https://github.com/acme/service/pull/7",
                     "state": "open",
                     "merged_at": None,
-                    "review_decision": "APPROVED",
+                    "review_decision": None,
                     "user": {"login": "matt"},
                     "head": {"sha": "deadbeef"},
                     "base": {"ref": "main"},
                     "requested_reviewers": [{"login": "dev1"}],
                     "labels": [{"name": "safe"}],
                 }
+            )
+        if path == "/repos/acme/service/pulls/7/reviews":
+            return _json_response(
+                [
+                    {"state": "APPROVED"},
+                    {"state": "COMMENTED"},
+                    {"state": "CHANGES_REQUESTED"},
+                ]
             )
         if path == "/repos/acme/service/commits/deadbeef/check-runs":
             return _json_response(
@@ -88,6 +96,7 @@ def test_github_adapter_lists_prs_and_comments() -> None:
     assert prs[0].repo == "service"
     assert prs[0].author == "matt"
     assert prs[0].requested_reviewers == ("dev1",)
+    assert prs[0].review_decision == "CHANGES_REQUESTED"
 
     comment = adapter.get_bot_state_comment(prs[0])
     assert comment is not None
@@ -161,6 +170,8 @@ def test_slack_adapter_post_and_update() -> None:
 
     assert ts == "111.222"
     assert calls[0][1]["channel"] == "C1"
+    assert calls[0][1]["unfurl_links"] is False
+    assert calls[0][1]["unfurl_media"] is False
     assert calls[1][1]["text"] == "hello2"
 
 

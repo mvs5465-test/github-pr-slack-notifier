@@ -11,6 +11,7 @@ from .models import (
     DerivedStatus,
     PlanResult,
     PullRequestSnapshot,
+    PullRequestState,
     ReconcileState,
     RouteConfig,
     SlackMessageRef,
@@ -41,39 +42,53 @@ def compact_state_label(state: str) -> str:
 
 def _approval_label(state: ApprovalState) -> str:
     return {
-        ApprovalState.NEEDS_REVIEW: "needs review",
-        ApprovalState.APPROVED: "approved",
-        ApprovalState.CHANGES_REQUESTED: "changes requested",
+        ApprovalState.NEEDS_REVIEW: "👀 needs review",
+        ApprovalState.APPROVED: "✅ approved",
+        ApprovalState.CHANGES_REQUESTED: "❌ changes requested",
     }[state]
 
 
 def _checks_label(state: ChecksState) -> str:
     return {
-        ChecksState.NO_CHECKS: "no checks",
-        ChecksState.PENDING: "pending",
-        ChecksState.RUNNING: "running",
-        ChecksState.FAILED: "failed",
-        ChecksState.PASSED: "passed",
+        ChecksState.NO_CHECKS: "⚪ no checks",
+        ChecksState.PENDING: "🕒 pending",
+        ChecksState.RUNNING: "🏃 running",
+        ChecksState.FAILED: "❌ failed",
+        ChecksState.PASSED: "✅ passed",
     }[state]
 
 
+def _state_label(state: str) -> str:
+    compact = compact_state_label(state)
+    icon = {
+        "opened": "🟢",
+        "closed": "⚫",
+        "merged": "🟣",
+    }.get(compact, "ℹ️")
+    return f"{icon} {compact}"
+
+
+def _slack_link_label(title: str) -> str:
+    # Slack link labels use `|` as delimiter, so normalize it in PR titles.
+    return title.replace("|", "¦")
+
+
+def _italic(value: str) -> str:
+    return f"_{value}_"
+
+
 def build_message(pr: PullRequestSnapshot, status: DerivedStatus) -> PlannedMessage:
-    text = (
-        f"[{pr.repo}] <{pr.url}|PR #{pr.number}> by `{pr.author}` | "
-        f"state: {compact_state_label(pr.state.value)} | "
-        f"approval: {_approval_label(status.approval)} | "
-        f"checks: {_checks_label(status.checks)}"
-    )
-    fingerprint = make_fingerprint(
-        [
-            pr.repo,
-            str(pr.number),
-            pr.state.value,
-            status.approval.value,
-            status.checks.value,
-            ",".join(pr.requested_reviewers),
-        ]
-    )
+    parts = [
+        _italic(_state_label(pr.state.value)),
+        f"*{pr.repo}*",
+        f"<{pr.url}|{_slack_link_label(pr.title)}> by `{pr.author}`",
+    ]
+    if pr.state not in {PullRequestState.CLOSED, PullRequestState.MERGED}:
+        parts.append(_italic(_approval_label(status.approval)))
+        parts.append(_italic(_checks_label(status.checks)))
+    text = " | ".join(parts)
+    # Fingerprint is derived from rendered text so formatter/schema updates reconcile existing messages.
+    fingerprint = make_fingerprint([text])
     return PlannedMessage(text=text, fingerprint=fingerprint)
 
 
