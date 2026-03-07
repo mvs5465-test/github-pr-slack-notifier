@@ -69,14 +69,7 @@ pytest tests/integration/test_github_live.py -m integration --no-cov -q
 ```
 
 Or run via Actions workflow:
-- `Integration Live (GitHub)` (`.github/workflows/integration-live.yml`)
-- configure repository secrets:
-  - `INTEGRATION_GITHUB_APP_ID`
-  - `INTEGRATION_GITHUB_APP_PRIVATE_KEY`
-  - `INTEGRATION_GITHUB_INSTALLATION_IDS`
-- configure repository variables:
-  - `INTEGRATION_GITHUB_ORG`
-  - `INTEGRATION_GITHUB_REPO`
+Run locally with explicit env vars as shown above.
 
 ## GitHub App setup (first pass)
 
