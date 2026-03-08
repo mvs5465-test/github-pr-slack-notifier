@@ -264,3 +264,21 @@ def test_reconcile_sweep_processes_full_route_list() -> None:
     count = engine.reconcile_sweep()
     assert count == 2
     assert len(slack.posts) == 0
+    assert gh.force_refresh_flags == [False, False]
+
+
+def test_reconcile_sweep_forces_comment_refresh_for_rest_fallback_routes() -> None:
+    route = RouteConfig(name="default", org_pattern="acme", repo_pattern="service-*", channel="C123")
+    pr = _pr(number=30, state=PullRequestState.OPEN)
+    gh = FakeGitHub(light={"default": [pr]}, full={"default": [pr]}, comment=None)
+    slack = FakeSlack()
+    engine = ReconcileEngine(
+        github=gh,
+        slack=slack,
+        routes=[route],
+        enable_historical_closed_prs=True,
+        dry_run=True,
+    )
+
+    assert engine.reconcile_sweep() == 1
+    assert gh.force_refresh_flags == [True]

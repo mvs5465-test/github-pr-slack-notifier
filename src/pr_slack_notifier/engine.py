@@ -114,6 +114,10 @@ class ReconcileEngine:
             return candidate
         return current
 
+    @staticmethod
+    def _is_graphql_sweep_route(route: RouteConfig) -> bool:
+        return not any(ch in route.org_pattern for ch in "*?[]") and route.repo_pattern == "*"
+
     def _should_skip_historical_closed(self, pr: PullRequestSnapshot, existing_comment: str | None) -> bool:
         if self.enable_historical_closed_prs:
             return False
@@ -323,8 +327,9 @@ class ReconcileEngine:
                 span.set_attribute("route.name", route.name)
                 prs = self.github.list_pull_requests_for_sweep(route)
             observe_route_pr_snapshot(route.name, prs)
+            force_refresh_state = not self._is_graphql_sweep_route(route)
             for pr in prs:
-                if self._reconcile_pr(route, pr, force_refresh_state=False):
+                if self._reconcile_pr(route, pr, force_refresh_state=force_refresh_state):
                     reconciled += 1
                 ref = self._make_ref(route, pr)
                 self._pr_meta[ref] = self._meta_from_pr(pr)

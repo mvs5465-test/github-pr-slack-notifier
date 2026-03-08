@@ -58,6 +58,7 @@ Environment variables:
 Sweep behavior notes:
 - GraphQL sweep optimization is used only for routes with an explicit org (`org_pattern` without wildcards) and `repo_pattern="*"`.
 - Other route patterns fall back to the REST listing path.
+- For REST-fallback routes, sweep forces a fresh bot-comment read per PR to preserve self-healing when comments were deleted out-of-band.
 - `ENABLE_SWEEP_RECONCILE` was removed; sweep is always enabled and runs on `SWEEP_RECONCILE_INTERVAL_SECONDS`.
 
 ## Local development
