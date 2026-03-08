@@ -255,45 +255,86 @@ class GitHubAppAdapter:
             raise GitHubApiError(f"Invalid repository_url in search payload: {repository_url}")
         return parts[-2], parts[-1]
 
-    def _list_pull_requests_org_wide_lightweight(
+    def _list_pull_requests_org_wide(
         self,
         route: RouteConfig,
         *,
+        include_enrichment: bool,
         updated_after: datetime | None,
     ) -> list[PullRequestSnapshot]:
         if any(ch in route.org_pattern for ch in "*?[]"):
-            raise GitHubApiError("Lightweight mode requires an explicit org_pattern for org-wide search")
+            raise GitHubApiError("Org-wide search requires an explicit org_pattern")
+        if route.repo_pattern != "*":
+            raise GitHubApiError("Org-wide search requires repo_pattern='*'")
         installation_id = self.installation_ids[0]
         token = self._installation_token(installation_id)
-        qualifiers = [f"org:{route.org_pattern}", "is:pr", "is:open"]
+        qualifiers = [f"org:{route.org_pattern}", "is:pr"]
+        if not include_enrichment:
+            qualifiers.append("is:open")
         if updated_after is not None:
             qualifiers.append(f"updated:>={self._format_github_search_timestamp(updated_after)}")
         query = " ".join(qualifiers)
         encoded_query = quote_plus(query)
-        payload = self._request(
-            "GET",
-            f"/search/issues?q={encoded_query}&sort=updated&order=desc&per_page=100&page=1",
-            token=token,
-        )
 
         snapshots: list[PullRequestSnapshot] = []
-        for item in payload.get("items", []):
-            org, repo = self._org_repo_from_repository_url(str(item.get("repository_url", "")))
-            state_value = str(item.get("state", "open"))
-            snapshot_payload = {
-                "number": int(item["number"]),
-                "title": str(item.get("title", "")),
-                "html_url": str(item.get("html_url", "")),
-                "state": state_value,
-                "merged_at": None,
-                "user": {"login": str(item.get("user", {}).get("login", ""))},
-                "head": {"sha": ""},
-                "updated_at": item.get("updated_at"),
-                "base": {"ref": "main"},
-                "requested_reviewers": [],
-                "labels": item.get("labels", []),
-            }
-            snapshots.append(self._snapshot_from_payload(snapshot_payload, org=org, repo=repo))
+        page = 1
+        while page <= 10:
+            payload = self._request(
+                "GET",
+                f"/search/issues?q={encoded_query}&sort=updated&order=desc&per_page=100&page={page}",
+                token=token,
+            )
+            items = payload.get("items", [])
+            if not items:
+                break
+
+            for item in items:
+                org, repo = self._org_repo_from_repository_url(str(item.get("repository_url", "")))
+                self._repo_installation_cache[(org, repo)] = installation_id
+                if not include_enrichment:
+                    state_value = str(item.get("state", "open"))
+                    snapshot_payload = {
+                        "number": int(item["number"]),
+                        "title": str(item.get("title", "")),
+                        "html_url": str(item.get("html_url", "")),
+                        "state": state_value,
+                        "merged_at": None,
+                        "user": {"login": str(item.get("user", {}).get("login", ""))},
+                        "head": {"sha": ""},
+                        "updated_at": item.get("updated_at"),
+                        "base": {"ref": "main"},
+                        "requested_reviewers": [],
+                        "labels": item.get("labels", []),
+                    }
+                    snapshots.append(self._snapshot_from_payload(snapshot_payload, org=org, repo=repo))
+                    continue
+
+                details = self._request(
+                    "GET",
+                    f"/repos/{org}/{repo}/pulls/{item['number']}",
+                    token=token,
+                )
+                review_decision = self._fetch_review_decision(
+                    token=token,
+                    org=org,
+                    repo=repo,
+                    pr_number=int(details["number"]),
+                    review_decision=details.get("review_decision"),
+                )
+                check_runs = self._fetch_check_runs(token, org, repo, details["head"]["sha"])
+                snapshots.append(
+                    self._snapshot_from_payload(
+                        details,
+                        org=org,
+                        repo=repo,
+                        check_runs=check_runs,
+                        review_decision=review_decision,
+                    )
+                )
+
+            if len(items) < 100:
+                break
+            page += 1
         return snapshots
 
     def _snapshot_from_payload(
@@ -329,8 +370,12 @@ class GitHubAppAdapter:
         include_enrichment: bool = True,
         updated_after: datetime | None = None,
     ) -> list[PullRequestSnapshot]:
-        if not include_enrichment and self.installation_ids:
-            return self._list_pull_requests_org_wide_lightweight(route, updated_after=updated_after)
+        if self.installation_ids and not any(ch in route.org_pattern for ch in "*?[]") and route.repo_pattern == "*":
+            return self._list_pull_requests_org_wide(
+                route,
+                include_enrichment=include_enrichment,
+                updated_after=updated_after,
+            )
 
         snapshots: list[PullRequestSnapshot] = []
         for installation_id, org, repo in self._iter_matching_repositories(route):
