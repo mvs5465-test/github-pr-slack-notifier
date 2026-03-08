@@ -47,6 +47,9 @@ class GitHubAdapter(Protocol):
     ) -> PullRequestSnapshot | None:
         ...
 
+    def list_pull_requests_for_sweep(self, route: RouteConfig) -> list[PullRequestSnapshot]:
+        ...
+
 
 class SlackAdapter(Protocol):
     def post_message(self, channel: str, text: str) -> str:
@@ -311,6 +314,25 @@ class ReconcileEngine:
                 if self._reconcile_pr(route, full_pr, force_refresh_state=force_refresh_state):
                     reconciled += 1
                 self._pr_meta[ref] = self._meta_from_pr(full_pr)
+        return reconciled
+
+    def reconcile_sweep(self) -> int:
+        reconciled = 0
+        for route in self.routes:
+            with self._tracer.start_as_current_span("reconcile_route_sweep") as span:
+                span.set_attribute("route.name", route.name)
+                prs = self.github.list_pull_requests_for_sweep(route)
+            observe_route_pr_snapshot(route.name, prs)
+            for pr in prs:
+                if self._reconcile_pr(route, pr, force_refresh_state=False):
+                    reconciled += 1
+                ref = self._make_ref(route, pr)
+                self._pr_meta[ref] = self._meta_from_pr(pr)
+                self._route_watermarks[route.name] = self._merge_watermark(
+                    self._route_watermarks.get(route.name),
+                    pr.updated_at,
+                )
+                self._pending_changed.discard(ref)
         return reconciled
 
     def run_once(self) -> int:

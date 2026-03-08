@@ -74,9 +74,8 @@ def test_run_forever_runs_single_iteration(monkeypatch) -> None:
         def reconcile_changed(self):
             self.changed_calls += 1
 
-        def reconcile_all(self, *, force_refresh_state: bool):
+        def reconcile_sweep(self):
             self.sweep_calls += 1
-            assert force_refresh_state is False
 
     state = {"engine": None, "github": None, "slack": None}
 
@@ -126,7 +125,7 @@ def test_run_forever_retries_on_rate_limit_without_crashing(monkeypatch) -> None
         def reconcile_changed(self):
             raise AssertionError("should not be called")
 
-        def reconcile_all(self, *, force_refresh_state: bool):
+        def reconcile_sweep(self):
             raise AssertionError("should not be called")
 
     sleeps: list[float] = []
@@ -171,7 +170,7 @@ def test_run_forever_retries_on_generic_error_without_crashing(monkeypatch) -> N
         def reconcile_changed(self):
             raise AssertionError("should not be called")
 
-        def reconcile_all(self, *, force_refresh_state: bool):
+        def reconcile_sweep(self):
             raise AssertionError("should not be called")
 
     sleeps: list[float] = []
@@ -212,9 +211,8 @@ def test_run_forever_runs_sweep(monkeypatch) -> None:
         def reconcile_changed(self):
             self.changed_calls += 1
 
-        def reconcile_all(self, *, force_refresh_state: bool):
+        def reconcile_sweep(self):
             self.sweep_calls += 1
-            assert force_refresh_state is False
 
     state = {"engine": None}
 
@@ -259,9 +257,8 @@ def test_run_forever_deep_runs_when_search_blocked_but_core_available(monkeypatc
         def reconcile_changed(self):
             self.changed_calls += 1
 
-        def reconcile_all(self, *, force_refresh_state: bool):
+        def reconcile_sweep(self):
             self.sweep_calls += 1
-            assert force_refresh_state is False
 
     state = {"engine": None}
     rate_limit_events: list[tuple[str, str, int]] = []

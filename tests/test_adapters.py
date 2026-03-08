@@ -427,6 +427,194 @@ def test_github_adapter_get_pull_request_returns_none_for_404() -> None:
     assert adapter.get_pull_request(route, org="acme", repo="service", number=404, include_enrichment=True) is None
 
 
+def test_github_adapter_sweep_uses_graphql_and_includes_closed_and_merged(monkeypatch) -> None:
+    calls: list[str] = []
+    marker = render_state_marker(
+        ReconcileState(
+            message=SlackMessageRef(channel="C1", ts="123.456"),
+            fingerprint="abc",
+        )
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        calls.append(path)
+        if path == "/app/installations/1/access_tokens":
+            return _json_response({"token": "inst-token", "expires_at": "2099-01-01T00:00:00Z"})
+        if path == "/graphql":
+            payload = json.loads(request.content.decode("utf-8"))
+            query = payload["query"]
+            headers = {
+                "x-ratelimit-limit": "5000",
+                "x-ratelimit-remaining": "4000",
+                "x-ratelimit-reset": "2000",
+                "x-ratelimit-resource": "graphql",
+            }
+            if "organization(login" in query:
+                return httpx.Response(
+                    status_code=200,
+                    headers=headers,
+                    json={
+                        "data": {
+                            "organization": {
+                                "repositories": {
+                                    "nodes": [{"name": "service"}],
+                                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                }
+                            }
+                        }
+                    },
+                )
+            return httpx.Response(
+                status_code=200,
+                headers=headers,
+                json={
+                    "data": {
+                        "repository": {
+                            "pullRequests": {
+                                "nodes": [
+                                    {
+                                        "number": 7,
+                                        "title": "Open PR",
+                                        "url": "https://github.com/acme/service/pull/7",
+                                        "state": "OPEN",
+                                        "mergedAt": None,
+                                        "updatedAt": "2026-03-08T01:00:00Z",
+                                        "reviewDecision": "APPROVED",
+                                        "baseRefName": "main",
+                                        "headRefOid": "sha-open",
+                                        "author": {"login": "matt"},
+                                        "labels": {"nodes": [{"name": "safe"}]},
+                                        "reviewRequests": {"nodes": []},
+                                        "comments": {"nodes": [{"databaseId": 77, "body": marker}]},
+                                        "commits": {
+                                            "nodes": [
+                                                {
+                                                    "commit": {
+                                                        "statusCheckRollup": {
+                                                            "contexts": {
+                                                                "nodes": [
+                                                                    {
+                                                                        "__typename": "CheckRun",
+                                                                        "name": "ci",
+                                                                        "status": "COMPLETED",
+                                                                        "conclusion": "SUCCESS",
+                                                                    }
+                                                                ]
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            ]
+                                        },
+                                    },
+                                    {
+                                        "number": 8,
+                                        "title": "Merged PR",
+                                        "url": "https://github.com/acme/service/pull/8",
+                                        "state": "CLOSED",
+                                        "mergedAt": "2026-03-08T00:00:00Z",
+                                        "updatedAt": "2026-03-08T01:05:00Z",
+                                        "reviewDecision": None,
+                                        "baseRefName": "main",
+                                        "headRefOid": "sha-merged",
+                                        "author": {"login": "jane"},
+                                        "labels": {"nodes": []},
+                                        "reviewRequests": {"nodes": []},
+                                        "comments": {"nodes": []},
+                                        "commits": {"nodes": []},
+                                    },
+                                ],
+                                "pageInfo": {"hasNextPage": False, "endCursor": None},
+                            }
+                        }
+                    }
+                },
+            )
+        raise AssertionError(f"unexpected request {request.method} {path}")
+
+    monkeypatch.setattr("pr_slack_notifier.adapters.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("pr_slack_notifier.adapters.time.time", lambda: 1000.0)
+    client = httpx.Client(transport=httpx.MockTransport(handler), base_url="https://api.github.com")
+    adapter = GitHubAppAdapter(
+        app_id="123",
+        private_key_pem="unused",
+        installation_ids=(1,),
+        client=client,
+    )
+    adapter._build_app_jwt = lambda: "app-jwt"  # type: ignore[method-assign]
+    route = RouteConfig(name="default", org_pattern="acme", repo_pattern="*", channel="C1")
+
+    prs = adapter.list_pull_requests_for_sweep(route)
+    assert [pr.number for pr in prs] == [7, 8]
+    assert prs[0].state == PullRequestState.OPEN
+    assert prs[1].state == PullRequestState.MERGED
+    # Marker comment from GraphQL should be cached and returned without REST comments fetch.
+    assert adapter.get_bot_state_comment(prs[0]) == marker
+    assert "/repos/acme/service/issues/7/comments" not in calls
+
+
+def test_github_adapter_sweep_graphql_applies_proportional_backpressure(monkeypatch) -> None:
+    sleeps: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/app/installations/1/access_tokens":
+            return _json_response({"token": "inst-token", "expires_at": "2099-01-01T00:00:00Z"})
+        if path == "/graphql":
+            payload = json.loads(request.content.decode("utf-8"))
+            query = payload["query"]
+            headers = {
+                "x-ratelimit-limit": "5000",
+                "x-ratelimit-remaining": "10",
+                "x-ratelimit-reset": "1100",
+                "x-ratelimit-resource": "graphql",
+            }
+            if "organization(login" in query:
+                return httpx.Response(
+                    status_code=200,
+                    headers=headers,
+                    json={
+                        "data": {
+                            "organization": {
+                                "repositories": {
+                                    "nodes": [{"name": "service"}],
+                                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                }
+                            }
+                        }
+                    },
+                )
+            return httpx.Response(
+                status_code=200,
+                headers=headers,
+                json={
+                    "data": {
+                        "repository": {
+                            "pullRequests": {"nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}
+                        }
+                    }
+                },
+            )
+        raise AssertionError(f"unexpected request {request.method} {path}")
+
+    monkeypatch.setattr("pr_slack_notifier.adapters.time.sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr("pr_slack_notifier.adapters.time.time", lambda: 1000.0)
+    client = httpx.Client(transport=httpx.MockTransport(handler), base_url="https://api.github.com")
+    adapter = GitHubAppAdapter(
+        app_id="123",
+        private_key_pem="unused",
+        installation_ids=(1,),
+        client=client,
+    )
+    adapter._build_app_jwt = lambda: "app-jwt"  # type: ignore[method-assign]
+    route = RouteConfig(name="default", org_pattern="acme", repo_pattern="*", channel="C1")
+
+    adapter.list_pull_requests_for_sweep(route)
+    assert len(sleeps) >= 2
+    assert all(value > 0 for value in sleeps)
+
+
 def test_slack_adapter_post_and_update() -> None:
     calls: list[tuple[str, dict]] = []
 

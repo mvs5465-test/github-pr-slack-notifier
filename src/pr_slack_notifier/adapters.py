@@ -73,6 +73,8 @@ class GitHubAppAdapter:
         self._repo_list_cache: dict[int, tuple[float, list[tuple[str, str]]]] = {}
         self._repo_list_cache_ttl_seconds = 300
         self._tracer = trace.get_tracer(__name__)
+        self._graphql_repo_page_size = 100
+        self._graphql_pr_page_size = 50
 
     def _build_app_jwt(self) -> str:
         now = int(time.time())
@@ -146,6 +148,98 @@ class GitHubAppAdapter:
         if response.text:
             return response.json()
         return None
+
+    @staticmethod
+    def _parse_rate_limit_headers(headers: httpx.Headers) -> tuple[int | None, int | None, float | None, str | None]:
+        remaining: int | None = None
+        limit: int | None = None
+        reset_at_epoch: float | None = None
+
+        remaining_header = headers.get("x-ratelimit-remaining")
+        if remaining_header is not None:
+            try:
+                remaining = int(float(remaining_header))
+            except ValueError:
+                remaining = None
+
+        limit_header = headers.get("x-ratelimit-limit")
+        if limit_header is not None:
+            try:
+                limit = int(float(limit_header))
+            except ValueError:
+                limit = None
+
+        reset_header = headers.get("x-ratelimit-reset")
+        if reset_header:
+            try:
+                reset_at_epoch = float(reset_header)
+            except ValueError:
+                reset_at_epoch = None
+
+        resource = headers.get("x-ratelimit-resource")
+        return remaining, limit, reset_at_epoch, resource
+
+    def _graphql_backpressure_sleep(self, headers: httpx.Headers) -> None:
+        remaining, limit, reset_at_epoch, resource = self._parse_rate_limit_headers(headers)
+        if remaining is None or limit is None or reset_at_epoch is None:
+            return
+
+        now_epoch = time.time()
+        seconds_to_reset = max(reset_at_epoch - now_epoch, 1.0)
+        if remaining <= 1:
+            raise GitHubRateLimitError(
+                "GraphQL rate budget nearly exhausted",
+                reset_at_epoch=reset_at_epoch,
+                resource=resource or "graphql",
+            )
+
+        ratio = remaining / max(limit, 1)
+        base_spacing_seconds = seconds_to_reset / max(remaining, 1)
+        multiplier = 1.0 + max(0.0, (0.5 - ratio) * 4.0)
+        sleep_seconds = min(base_spacing_seconds * multiplier, 30.0)
+        if sleep_seconds > 0:
+            time.sleep(sleep_seconds)
+
+    def _graphql_request(self, token: str, query: str, variables: dict[str, Any]) -> Any:
+        started = time.monotonic()
+        with self._tracer.start_as_current_span("github_graphql_request") as span:
+            response = self._client.post(
+                f"{self.api_base_url}/graphql",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                    "User-Agent": "github-pr-slack-notifier",
+                },
+                json={"query": query, "variables": variables},
+            )
+            span.set_attribute("http.status_code", response.status_code)
+        observe_api_request("github", "/graphql", response.status_code, time.monotonic() - started)
+
+        remaining, _limit, reset_at_epoch, resource = self._parse_rate_limit_headers(response.headers)
+        if response.status_code == 403 and remaining is not None and remaining <= 0:
+            raise GitHubRateLimitError(
+                f"GitHub GraphQL request failed: {response.status_code} {response.text}",
+                reset_at_epoch=reset_at_epoch,
+                resource=resource or "graphql",
+            )
+        if response.status_code >= 400:
+            raise GitHubApiError(f"GitHub GraphQL request failed: {response.status_code} {response.text}")
+
+        payload = response.json() if response.text else {}
+        errors = payload.get("errors", [])
+        if errors:
+            joined = " | ".join(str(err.get("message", "")).lower() for err in errors)
+            if "rate limit" in joined:
+                raise GitHubRateLimitError(
+                    f"GitHub GraphQL rate-limited: {errors}",
+                    reset_at_epoch=reset_at_epoch,
+                    resource=resource or "graphql",
+                )
+            raise GitHubApiError(f"GitHub GraphQL returned errors: {errors}")
+
+        self._graphql_backpressure_sleep(response.headers)
+        return payload.get("data", {})
 
     def _installation_token(self, installation_id: int) -> str:
         cached = self._token_cache.get(installation_id)
@@ -344,6 +438,231 @@ class GitHubAppAdapter:
             if len(items) < 100:
                 break
             page += 1
+        return snapshots
+
+    def _graphql_list_org_repositories(self, token: str, org: str, repo_pattern: str) -> list[str]:
+        query = """
+        query($org: String!, $first: Int!, $after: String) {
+          organization(login: $org) {
+            repositories(first: $first, after: $after, orderBy: {field: UPDATED_AT, direction: DESC}) {
+              nodes { name }
+              pageInfo { hasNextPage endCursor }
+            }
+          }
+        }
+        """
+        repos: list[str] = []
+        after: str | None = None
+        while True:
+            data = self._graphql_request(
+                token=token,
+                query=query,
+                variables={"org": org, "first": self._graphql_repo_page_size, "after": after},
+            )
+            org_node = data.get("organization")
+            if not org_node:
+                break
+            repo_conn = org_node.get("repositories", {})
+            nodes = repo_conn.get("nodes", [])
+            for node in nodes:
+                name = str(node.get("name", ""))
+                if fnmatch.fnmatch(name, repo_pattern):
+                    repos.append(name)
+                    self._repo_installation_cache[(org, name)] = self.installation_ids[0]
+            page_info = repo_conn.get("pageInfo", {})
+            if not page_info.get("hasNextPage"):
+                break
+            after = page_info.get("endCursor")
+            if not after:
+                break
+        return repos
+
+    def _checks_from_status_rollup(self, rollup: dict[str, Any] | None) -> tuple[CheckRun, ...]:
+        if not rollup:
+            return ()
+        contexts = (rollup.get("contexts") or {}).get("nodes") or []
+        checks: list[CheckRun] = []
+        for item in contexts:
+            typename = item.get("__typename")
+            if typename == "CheckRun":
+                checks.append(
+                    CheckRun(
+                        name=str(item.get("name", "")),
+                        status=str(item.get("status", "")).lower(),
+                        conclusion=(str(item.get("conclusion")).lower() if item.get("conclusion") else None),
+                    )
+                )
+                continue
+            if typename == "StatusContext":
+                state = str(item.get("state", "")).upper()
+                status = "pending"
+                conclusion: str | None = None
+                if state == "SUCCESS":
+                    status = "completed"
+                    conclusion = "success"
+                elif state in {"ERROR", "FAILURE"}:
+                    status = "completed"
+                    conclusion = "failure"
+                checks.append(
+                    CheckRun(
+                        name=str(item.get("context", "")),
+                        status=status,
+                        conclusion=conclusion,
+                    )
+                )
+        return tuple(checks)
+
+    def _snapshot_from_graphql_pr(self, *, org: str, repo: str, node: dict[str, Any]) -> PullRequestSnapshot:
+        pr_number = int(node["number"])
+        merged_at = node.get("mergedAt")
+        state = self._pr_state(merged_at, str(node.get("state", "OPEN")))
+        review_requests = (node.get("reviewRequests") or {}).get("nodes") or []
+        requested_reviewers: list[str] = []
+        for req in review_requests:
+            reviewer = req.get("requestedReviewer") or {}
+            if reviewer.get("__typename") == "User" and reviewer.get("login"):
+                requested_reviewers.append(str(reviewer["login"]))
+
+        labels_nodes = (node.get("labels") or {}).get("nodes") or []
+        labels = tuple(str(label.get("name", "")) for label in labels_nodes if label.get("name"))
+
+        comments_nodes = (node.get("comments") or {}).get("nodes") or []
+        cache_key = (org, repo, pr_number)
+        marker_body: str | None = None
+        marker_id: int | None = None
+        for comment in comments_nodes:
+            body = comment.get("body")
+            if parse_state_marker(body) is not None:
+                marker_body = body
+                dbid = comment.get("databaseId")
+                if dbid is not None:
+                    marker_id = int(dbid)
+                break
+        self._comment_body_cache[cache_key] = marker_body
+        if marker_id is not None:
+            self._comment_id_cache[cache_key] = marker_id
+
+        commit_nodes = (node.get("commits") or {}).get("nodes") or []
+        rollup = None
+        if commit_nodes:
+            rollup = ((commit_nodes[0].get("commit") or {}).get("statusCheckRollup"))
+
+        return PullRequestSnapshot(
+            org=org,
+            repo=repo,
+            number=pr_number,
+            title=str(node.get("title", "")),
+            url=str(node.get("url", "")),
+            author=str((node.get("author") or {}).get("login", "")),
+            state=state,
+            head_sha=str(node.get("headRefOid", "")),
+            review_decision=node.get("reviewDecision"),
+            check_runs=self._checks_from_status_rollup(rollup),
+            requested_reviewers=tuple(requested_reviewers),
+            labels=labels,
+            target_branch=str(node.get("baseRefName", "main")),
+            updated_at=self._parse_updated_at(node.get("updatedAt")),
+        )
+
+    def _graphql_list_repo_pull_requests(self, token: str, org: str, repo: str) -> list[PullRequestSnapshot]:
+        query = """
+        query($org: String!, $repo: String!, $first: Int!, $after: String) {
+          repository(owner: $org, name: $repo) {
+            pullRequests(
+              first: $first,
+              after: $after,
+              states: [OPEN, CLOSED, MERGED],
+              orderBy: {field: UPDATED_AT, direction: DESC}
+            ) {
+              nodes {
+                number
+                title
+                url
+                state
+                mergedAt
+                updatedAt
+                reviewDecision
+                baseRefName
+                headRefOid
+                author { ... on User { login } }
+                labels(first: 20) { nodes { name } }
+                reviewRequests(first: 20) {
+                  nodes {
+                    requestedReviewer { __typename ... on User { login } }
+                  }
+                }
+                comments(last: 100) {
+                  nodes {
+                    databaseId
+                    body
+                  }
+                }
+                commits(last: 1) {
+                  nodes {
+                    commit {
+                      statusCheckRollup {
+                        contexts(first: 50) {
+                          nodes {
+                            __typename
+                            ... on CheckRun {
+                              name
+                              status
+                              conclusion
+                            }
+                            ... on StatusContext {
+                              context
+                              state
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+              pageInfo { hasNextPage endCursor }
+            }
+          }
+        }
+        """
+        snapshots: list[PullRequestSnapshot] = []
+        after: str | None = None
+        while True:
+            data = self._graphql_request(
+                token=token,
+                query=query,
+                variables={
+                    "org": org,
+                    "repo": repo,
+                    "first": self._graphql_pr_page_size,
+                    "after": after,
+                },
+            )
+            repo_node = data.get("repository")
+            if not repo_node:
+                break
+            pr_conn = repo_node.get("pullRequests", {})
+            nodes = pr_conn.get("nodes", [])
+            for node in nodes:
+                snapshots.append(self._snapshot_from_graphql_pr(org=org, repo=repo, node=node))
+            page_info = pr_conn.get("pageInfo", {})
+            if not page_info.get("hasNextPage"):
+                break
+            after = page_info.get("endCursor")
+            if not after:
+                break
+        return snapshots
+
+    def list_pull_requests_for_sweep(self, route: RouteConfig) -> list[PullRequestSnapshot]:
+        if any(ch in route.org_pattern for ch in "*?[]") or route.repo_pattern != "*":
+            return self.list_pull_requests(route, include_enrichment=True, updated_after=None)
+        installation_id = self.installation_ids[0]
+        token = self._installation_token(installation_id)
+        org = route.org_pattern
+        repos = self._graphql_list_org_repositories(token=token, org=org, repo_pattern=route.repo_pattern)
+        snapshots: list[PullRequestSnapshot] = []
+        for repo in repos:
+            snapshots.extend(self._graphql_list_repo_pull_requests(token=token, org=org, repo=repo))
         return snapshots
 
     def _snapshot_from_payload(

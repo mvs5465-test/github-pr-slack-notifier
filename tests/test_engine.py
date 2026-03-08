@@ -24,6 +24,9 @@ class FakeGitHub:
             return list(items)
         return [pr for pr in items if pr.updated_at is None or pr.updated_at >= updated_after]
 
+    def list_pull_requests_for_sweep(self, route):
+        return list(self.full.get(route.name, []))
+
     def get_pull_request(self, route, *, org: str, repo: str, number: int, include_enrichment: bool = True):
         source = self.full if include_enrichment else self.light
         for pr in source.get(route.name, []):
@@ -100,7 +103,13 @@ def test_refresh_lightweight_detects_head_sha_change() -> None:
     pr2 = _pr(head_sha="sha-2", updated_at=pr1.updated_at)
     gh = FakeGitHub(light={"default": [pr1]}, full={"default": [pr1]}, comment=None)
     slack = FakeSlack()
-    engine = ReconcileEngine(github=gh, slack=slack, routes=[route], dry_run=True)
+    engine = ReconcileEngine(
+        github=gh,
+        slack=slack,
+        routes=[route],
+        enable_historical_closed_prs=True,
+        dry_run=True,
+    )
 
     assert engine.refresh_lightweight() == 1
     assert engine.reconcile_changed() == 1
@@ -134,7 +143,13 @@ def test_run_once_uses_full_reconcile_without_force_refresh() -> None:
     pr = _pr()
     gh = FakeGitHub(light={"default": [pr]}, full={"default": [pr]}, comment=None)
     slack = FakeSlack()
-    engine = ReconcileEngine(github=gh, slack=slack, routes=[route], dry_run=True)
+    engine = ReconcileEngine(
+        github=gh,
+        slack=slack,
+        routes=[route],
+        enable_historical_closed_prs=True,
+        dry_run=True,
+    )
 
     count = engine.run_once()
     assert count == 1
@@ -230,3 +245,22 @@ def test_reconcile_all_soft_sweep_reconciles_only_changed_refs() -> None:
     gh.light = {"default": [changed]}
     gh.full = {"default": [changed]}
     assert engine.reconcile_all(force_refresh_state=False) == 1
+
+
+def test_reconcile_sweep_processes_full_route_list() -> None:
+    route = RouteConfig(name="default", org_pattern="acme", repo_pattern="*", channel="C123")
+    pr_open = _pr(number=21, state=PullRequestState.OPEN)
+    pr_closed = _pr(number=22, state=PullRequestState.CLOSED)
+    gh = FakeGitHub(light={"default": [pr_open]}, full={"default": [pr_open, pr_closed]}, comment=None)
+    slack = FakeSlack()
+    engine = ReconcileEngine(
+        github=gh,
+        slack=slack,
+        routes=[route],
+        enable_historical_closed_prs=True,
+        dry_run=True,
+    )
+
+    count = engine.reconcile_sweep()
+    assert count == 2
+    assert len(slack.posts) == 0
