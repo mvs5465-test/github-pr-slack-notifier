@@ -83,3 +83,7 @@ jobs:
             });
 
             core.info(`Submitted ${reviewAction} review to PR #${pullNumber}`);
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref || github.run_id }}
+  cancel-in-progress: true
