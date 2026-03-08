@@ -78,7 +78,7 @@ def test_run_forever_runs_single_iteration(monkeypatch) -> None:
 
         def reconcile_all(self, *, force_refresh_state: bool):
             self.sweep_calls += 1
-            assert force_refresh_state is True
+            assert force_refresh_state is False
 
     state = {"engine": None, "github": None, "slack": None}
 
@@ -216,7 +216,7 @@ def test_run_forever_runs_sweep_when_enabled(monkeypatch) -> None:
 
         def reconcile_all(self, *, force_refresh_state: bool):
             self.sweep_calls += 1
-            assert force_refresh_state is True
+            assert force_refresh_state is False
 
     state = {"engine": None}
 
@@ -288,7 +288,7 @@ def test_run_forever_deep_runs_when_search_blocked_but_core_available(monkeypatc
 
         def reconcile_all(self, *, force_refresh_state: bool):
             self.sweep_calls += 1
-            assert force_refresh_state is True
+            assert force_refresh_state is False
 
     state = {"engine": None}
     rate_limit_events: list[tuple[str, str, int]] = []

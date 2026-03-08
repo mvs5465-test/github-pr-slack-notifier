@@ -136,7 +136,7 @@ def run_forever() -> None:
                     run_loop("deep", engine.reconcile_changed)
                     next_deep_at = now + settings.deep_reconcile_interval_seconds
                 if settings.enable_sweep_reconcile and now >= next_sweep_at:
-                    run_loop("sweep", lambda: engine.reconcile_all(force_refresh_state=True))
+                    run_loop("sweep", lambda: engine.reconcile_all(force_refresh_state=False))
                     next_sweep_at = now + settings.sweep_reconcile_interval_seconds
             except Exception:
                 observe_reconcile_error("cycle")

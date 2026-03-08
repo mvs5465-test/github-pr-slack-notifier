@@ -44,7 +44,7 @@ class GitHubRateLimitError(GitHubApiError):
         retry = int(self.reset_at_epoch - now_epoch) + 1
         if retry < 1:
             retry = 1
-        return retry
+        return min(retry, max_seconds)
 
 
 class SlackApiError(RuntimeError):
@@ -439,6 +439,46 @@ class GitHubAppAdapter:
                     break
                 page += 1
         return snapshots
+
+    def get_pull_request(
+        self,
+        route: RouteConfig,
+        *,
+        org: str,
+        repo: str,
+        number: int,
+        include_enrichment: bool = True,
+    ) -> PullRequestSnapshot | None:
+        token = self._token_for_repo(org, repo)
+        try:
+            details = self._request(
+                "GET",
+                f"/repos/{org}/{repo}/pulls/{number}",
+                token=token,
+            )
+        except GitHubApiError as exc:
+            if " 404 " in str(exc):
+                return None
+            raise
+
+        if not include_enrichment:
+            return self._snapshot_from_payload(details, org=org, repo=repo)
+
+        review_decision = self._fetch_review_decision(
+            token=token,
+            org=org,
+            repo=repo,
+            pr_number=int(details["number"]),
+            review_decision=details.get("review_decision"),
+        )
+        check_runs = self._fetch_check_runs(token, org, repo, details["head"]["sha"])
+        return self._snapshot_from_payload(
+            details,
+            org=org,
+            repo=repo,
+            check_runs=check_runs,
+            review_decision=review_decision,
+        )
 
     def get_bot_state_comment(self, pr: PullRequestSnapshot, *, force_refresh: bool = False) -> str | None:
         key = (pr.org, pr.repo, pr.number)
