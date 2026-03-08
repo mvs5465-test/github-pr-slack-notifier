@@ -375,3 +375,80 @@ def test_run_forever_blocks_sweep_when_graphql_resource_is_rate_limited(monkeypa
     assert state["engine"].changed_calls >= 1
     assert state["engine"].sweep_calls == 1
     assert rate_limit_events == [("loop", "graphql", 6)]
+
+
+def test_run_forever_fast_paths_deep_when_lightweight_detects_changes(monkeypatch) -> None:
+    class FakeEngine:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.refresh_calls = 0
+            self.changed_calls = 0
+            self.sweep_calls = 0
+
+        def refresh_lightweight(self):
+            self.refresh_calls += 1
+            if self.refresh_calls == 1:
+                return 0
+            return 1
+
+        def reconcile_changed(self):
+            self.changed_calls += 1
+            return 0
+
+        def reconcile_sweep(self):
+            self.sweep_calls += 1
+            return 0
+
+    state = {"engine": None}
+    sleeps: list[float] = []
+
+    def fake_engine_ctor(**kwargs):
+        engine = FakeEngine(**kwargs)
+        state["engine"] = engine
+        return engine
+
+    def settings_with_slow_deep() -> Settings:
+        s = _settings()
+        return Settings(
+            github_app_id=s.github_app_id,
+            github_app_private_key=s.github_app_private_key,
+            github_installation_ids=s.github_installation_ids,
+            slack_bot_token=s.slack_bot_token,
+            polling_interval_seconds=1,
+            deep_reconcile_interval_seconds=120,
+            sweep_reconcile_interval_seconds=120,
+            rate_limit_backoff_seconds=s.rate_limit_backoff_seconds,
+            rate_limit_backoff_max_seconds=s.rate_limit_backoff_max_seconds,
+            error_retry_seconds=s.error_retry_seconds,
+            enable_historical_closed_prs=s.enable_historical_closed_prs,
+            dry_run=s.dry_run,
+            routes=s.routes,
+            log_level=s.log_level,
+            json_logs=s.json_logs,
+            metrics_enabled=s.metrics_enabled,
+            metrics_port=s.metrics_port,
+            otel_service_name=s.otel_service_name,
+            otel_otlp_endpoint=s.otel_otlp_endpoint,
+        )
+
+    def fake_sleep(_seconds):
+        sleeps.append(_seconds)
+        if len(sleeps) >= 2:
+            raise RuntimeError("stop")
+
+    monkeypatch.setattr(app, "load_settings_from_env", settings_with_slow_deep)
+    monkeypatch.setattr(app, "ReconcileEngine", fake_engine_ctor)
+    monkeypatch.setattr(app, "GitHubAppAdapter", lambda **_kwargs: object())
+    monkeypatch.setattr(app, "SlackApiAdapter", lambda **_kwargs: object())
+    monkeypatch.setattr(app, "configure_logging", lambda **_kwargs: None)
+    monkeypatch.setattr(app, "maybe_start_metrics_server", lambda **_kwargs: None)
+    monkeypatch.setattr(app, "configure_tracing", lambda **_kwargs: None)
+    monkeypatch.setattr(app.time, "sleep", fake_sleep)
+
+    with pytest.raises(RuntimeError, match="stop"):
+        app.run_forever()
+
+    assert state["engine"] is not None
+    assert state["engine"].refresh_calls == 2
+    # first deep run is scheduled at startup; second deep run is fast-pathed from lightweight detection
+    assert state["engine"].changed_calls == 2

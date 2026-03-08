@@ -133,8 +133,17 @@ def run_forever() -> None:
         started = time.monotonic()
         with tracer.start_as_current_span("reconcile_cycle"):
             try:
-                run_loop("lightweight", engine.refresh_lightweight)
+                lightweight_items = run_loop("lightweight", engine.refresh_lightweight) or 0
                 now = time.monotonic()
+                if lightweight_items > 0 and now < next_deep_at:
+                    log.info(
+                        "reconcile.deep_fast_path pending_items=%s next_deep_in_seconds=%.3f",
+                        lightweight_items,
+                        max(next_deep_at - now, 0.0),
+                    )
+                    run_loop("deep", engine.reconcile_changed)
+                    next_deep_at = time.monotonic() + settings.deep_reconcile_interval_seconds
+                    now = time.monotonic()
                 if now >= next_deep_at:
                     run_loop("deep", engine.reconcile_changed)
                     next_deep_at = now + settings.deep_reconcile_interval_seconds
