@@ -223,7 +223,7 @@ def observe_route_pr_snapshot(route_name: str, prs: list[PullRequestSnapshot]) -
 
     ROUTE_PULL_REQUESTS_TOTAL.labels(route=route_name).set(len(prs))
 
-    for state in ("open", "closed", "merged"):
+    for state in ("open", "draft", "closed", "merged"):
         ROUTE_PULL_REQUESTS_BY_STATE.labels(route=route_name, state=state).set(state_counts.get(state, 0))
     for approval in ("needs_review", "approved", "changes_requested"):
         ROUTE_PULL_REQUESTS_BY_APPROVAL.labels(route=route_name, approval=approval).set(

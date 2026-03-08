@@ -35,6 +35,12 @@ def test_rate_limit_error_retry_clamps_to_max_seconds() -> None:
     assert err.retry_after_seconds(now_epoch=100.0, default_seconds=60, max_seconds=120) == 120
 
 
+def test_pr_state_precedence_handles_draft_and_terminal_states() -> None:
+    assert GitHubAppAdapter._pr_state(None, "open", is_draft=True) is PullRequestState.DRAFT
+    assert GitHubAppAdapter._pr_state(None, "closed", is_draft=True) is PullRequestState.CLOSED
+    assert GitHubAppAdapter._pr_state("2026-03-08T00:00:00Z", "closed", is_draft=True) is PullRequestState.MERGED
+
+
 def test_github_adapter_lists_prs_and_comments() -> None:
     marker = render_state_marker(
         ReconcileState(
@@ -228,6 +234,7 @@ def test_github_adapter_lightweight_mode_and_updated_after_filter() -> None:
                             "title": "New",
                             "html_url": "https://github.com/acme/service/pull/8",
                             "state": "open",
+                            "draft": True,
                             "user": {"login": "matt"},
                             "updated_at": "2026-03-07T12:00:00Z",
                             "repository_url": "https://api.github.com/repos/acme/service",
@@ -251,6 +258,7 @@ def test_github_adapter_lightweight_mode_and_updated_after_filter() -> None:
     cutoff = datetime(2026, 3, 7, 11, 0, tzinfo=timezone.utc)
     prs = adapter.list_pull_requests(route, include_enrichment=False, updated_after=cutoff)
     assert [pr.number for pr in prs] == [8]
+    assert prs[0].state is PullRequestState.DRAFT
     assert prs[0].head_sha == ""
     assert prs[0].labels == ("ready",)
     search_calls = [call for call in calls if call[1] == "/search/issues"]
@@ -487,9 +495,10 @@ def test_github_adapter_sweep_uses_graphql_and_includes_closed_and_merged(monkey
                             "nodes": [
                                 {
                                     "number": 7,
-                                    "title": "Open PR",
+                                    "title": "Draft PR",
                                     "url": "https://github.com/acme/service/pull/7",
                                     "state": "OPEN",
+                                    "isDraft": True,
                                     "mergedAt": None,
                                     "updatedAt": "2026-03-08T01:00:00Z",
                                     "reviewDecision": "APPROVED",
@@ -526,6 +535,7 @@ def test_github_adapter_sweep_uses_graphql_and_includes_closed_and_merged(monkey
                                     "title": "Merged PR",
                                     "url": "https://github.com/acme/service/pull/8",
                                     "state": "CLOSED",
+                                    "isDraft": False,
                                     "mergedAt": "2026-03-08T00:00:00Z",
                                     "updatedAt": "2026-03-08T01:05:00Z",
                                     "reviewDecision": None,
@@ -559,7 +569,7 @@ def test_github_adapter_sweep_uses_graphql_and_includes_closed_and_merged(monkey
 
     prs = adapter.list_pull_requests_for_sweep(route)
     assert [pr.number for pr in prs] == [7, 8]
-    assert prs[0].state == PullRequestState.OPEN
+    assert prs[0].state == PullRequestState.DRAFT
     assert prs[1].state == PullRequestState.MERGED
     # Marker comment from GraphQL should be cached and returned without REST comments fetch.
     assert adapter.get_bot_state_comment(prs[0]) == marker

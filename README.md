@@ -31,6 +31,8 @@ Example:
 
 `🟢 open | <https://github.com/org/repo/pull/123|Add feature x> by @author | *repo* | _✅ approved_ | _✅ passed_`
 
+Draft PRs use `:white_medium_square: draft`.
+
 ## Configuration
 
 Environment variables:

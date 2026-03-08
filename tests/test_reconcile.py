@@ -43,6 +43,7 @@ def _pr(state: PullRequestState = PullRequestState.OPEN, decision: str | None = 
 
 def test_compact_state_label() -> None:
     assert compact_state_label("open") == "open"
+    assert compact_state_label("draft") == "draft"
     assert compact_state_label("merged") == "merged"
 
 
@@ -91,6 +92,17 @@ def test_build_message_hides_approval_and_checks_for_merged() -> None:
     assert msg.text.startswith("_🟣 merged_ | <https://example.com/pr/42|Add thing> by `matt` | *widgets*")
     assert "approved" not in msg.text
     assert "checks" not in msg.text
+
+
+def test_build_message_for_draft_uses_draft_emoji() -> None:
+    pr = _pr(state=PullRequestState.DRAFT, decision="APPROVED")
+    status = derive_status(pr)
+    msg = build_message(pr, status)
+    assert msg.text.startswith(
+        ":white_medium_square: draft | <https://example.com/pr/42|Add thing> by `matt` | *widgets* |"
+    )
+    assert "_✅ approved_" in msg.text
+    assert "_⚪ no checks_" in msg.text
 
 
 def test_build_message_fingerprint_changes_when_title_changes() -> None:

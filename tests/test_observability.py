@@ -104,11 +104,24 @@ def test_observe_route_pr_snapshot_sets_route_gauges() -> None:
             check_runs=(CheckRun(name="ci", status="completed", conclusion="failure"),),
             updated_at=datetime.now(timezone.utc),
         ),
+        PullRequestSnapshot(
+            org="acme",
+            repo="widgets",
+            number=3,
+            title="three",
+            url="https://example.com/3",
+            author="dev",
+            state=PullRequestState.DRAFT,
+            review_decision=None,
+            check_runs=(),
+            updated_at=datetime.now(timezone.utc),
+        ),
     ]
 
     obs.observe_route_pr_snapshot("default", prs)
 
-    assert obs.ROUTE_PULL_REQUESTS_TOTAL.labels(route="default")._value.get() == 2
+    assert obs.ROUTE_PULL_REQUESTS_TOTAL.labels(route="default")._value.get() == 3
+    assert obs.ROUTE_PULL_REQUESTS_BY_STATE.labels(route="default", state="draft")._value.get() == 1
     assert obs.ROUTE_PULL_REQUESTS_BY_APPROVAL.labels(route="default", approval="approved")._value.get() == 1
     assert (
         obs.ROUTE_PULL_REQUESTS_BY_APPROVAL.labels(route="default", approval="changes_requested")._value.get() == 1

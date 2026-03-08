@@ -35,6 +35,7 @@ class Logger(Protocol):
 def compact_state_label(state: str) -> str:
     return {
         "open": "open",
+        "draft": "draft",
         "closed": "closed",
         "merged": "merged",
     }.get(state.lower(), state.lower())
@@ -62,6 +63,7 @@ def _state_label(state: str) -> str:
     compact = compact_state_label(state)
     icon = {
         "open": "🟢",
+        "draft": ":white_medium_square:",
         "closed": "⚫",
         "merged": "🟣",
     }.get(compact, "ℹ️")
