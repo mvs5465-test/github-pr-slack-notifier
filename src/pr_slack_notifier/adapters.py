@@ -618,6 +618,8 @@ class GitHubAppAdapter:
         return snapshots
 
     def list_pull_requests_for_sweep(self, route: RouteConfig) -> list[PullRequestSnapshot]:
+        # Efficient GraphQL sweep currently applies only to exact-org/all-repos routes.
+        # Any wildcard org or narrower repo pattern falls back to REST full enrichment.
         if any(ch in route.org_pattern for ch in "*?[]") or route.repo_pattern != "*":
             return self.list_pull_requests(route, include_enrichment=True, updated_after=None)
         # GraphQL org-wide optimization currently assumes a single shared installation scope.
