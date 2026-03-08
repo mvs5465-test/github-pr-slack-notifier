@@ -97,6 +97,9 @@ class ReconcileEngine:
         self._route_watermarks: dict[str, datetime | None] = {route.name: None for route in routes}
         self._pr_meta: dict[_PrRef, _PrMeta] = {}
         self._pending_changed: set[_PrRef] = set()
+        self._recent_open_refs: dict[_PrRef, float] = {}
+        self._recent_open_ref_ttl_seconds = 3600
+        self._recent_open_probe_limit = 25
 
     @staticmethod
     def _make_ref(route: RouteConfig, pr: PullRequestSnapshot) -> _PrRef:
@@ -117,6 +120,75 @@ class ReconcileEngine:
     @staticmethod
     def _is_graphql_sweep_route(route: RouteConfig) -> bool:
         return not any(ch in route.org_pattern for ch in "*?[]") and route.repo_pattern == "*"
+
+    def _track_recent_open(self, ref: _PrRef, *, now_monotonic: float | None = None) -> None:
+        self._recent_open_refs[ref] = now_monotonic if now_monotonic is not None else time.monotonic()
+
+    def _untrack_recent_open(self, ref: _PrRef) -> None:
+        self._recent_open_refs.pop(ref, None)
+
+    def _reconcile_recent_open_transitions(self) -> int:
+        if not self._recent_open_refs:
+            return 0
+
+        now_monotonic = time.monotonic()
+        cutoff = now_monotonic - self._recent_open_ref_ttl_seconds
+        for ref, seen_at in list(self._recent_open_refs.items()):
+            if seen_at < cutoff or self._routes_by_name.get(ref.route_name) is None:
+                self._recent_open_refs.pop(ref, None)
+
+        reconciled = 0
+        probes = 0
+        for ref in sorted(self._recent_open_refs, key=lambda item: (item.route_name, item.org, item.repo, item.number)):
+            if probes >= self._recent_open_probe_limit:
+                break
+            if ref in self._pending_changed:
+                continue
+            route = self._routes_by_name.get(ref.route_name)
+            if route is None:
+                self._untrack_recent_open(ref)
+                continue
+
+            current = self.github.get_pull_request(
+                route,
+                org=ref.org,
+                repo=ref.repo,
+                number=ref.number,
+                include_enrichment=False,
+            )
+            probes += 1
+            if current is None:
+                self._pending_changed.discard(ref)
+                self._pr_meta.pop(ref, None)
+                self._untrack_recent_open(ref)
+                continue
+
+            self._pr_meta[ref] = self._meta_from_pr(current)
+            self._route_watermarks[route.name] = self._merge_watermark(
+                self._route_watermarks.get(route.name),
+                current.updated_at,
+            )
+
+            if current.state == PullRequestState.OPEN:
+                self._track_recent_open(ref, now_monotonic=now_monotonic)
+                continue
+
+            full_pr = self.github.get_pull_request(
+                route,
+                org=ref.org,
+                repo=ref.repo,
+                number=ref.number,
+                include_enrichment=True,
+            )
+            if full_pr is None:
+                full_pr = current
+            if self._reconcile_pr(route, full_pr, force_refresh_state=False):
+                reconciled += 1
+            self._pr_meta[ref] = self._meta_from_pr(full_pr)
+            self._pending_changed.discard(ref)
+            self._untrack_recent_open(ref)
+
+        return reconciled
 
     def _should_skip_historical_closed(self, pr: PullRequestSnapshot, existing_comment: str | None) -> bool:
         if self.enable_historical_closed_prs:
@@ -148,6 +220,8 @@ class ReconcileEngine:
                     self._pending_changed.add(ref)
                     changed += 1
                 self._pr_meta[ref] = meta
+                if pr.state == PullRequestState.OPEN:
+                    self._track_recent_open(ref)
                 self._route_watermarks[route.name] = self._merge_watermark(
                     self._route_watermarks.get(route.name),
                     pr.updated_at,
@@ -251,7 +325,7 @@ class ReconcileEngine:
 
     def reconcile_changed(self) -> int:
         if not self._pending_changed:
-            return 0
+            return self._reconcile_recent_open_transitions()
 
         processed = 0
         refs = sorted(self._pending_changed, key=lambda ref: (ref.route_name, ref.org, ref.repo, ref.number))
@@ -273,9 +347,14 @@ class ReconcileEngine:
                 )
                 if target is None:
                     self._pending_changed.discard(ref)
+                    self._untrack_recent_open(ref)
                     continue
                 if self._reconcile_pr(route, target, force_refresh_state=False):
                     processed += 1
+                if target.state == PullRequestState.OPEN:
+                    self._track_recent_open(ref)
+                else:
+                    self._untrack_recent_open(ref)
                 self._pending_changed.discard(ref)
 
         # Clear any stale references that no longer match configured routes.
@@ -283,7 +362,7 @@ class ReconcileEngine:
             route = self._routes_by_name.get(ref.route_name)
             if route is None:
                 self._pending_changed.discard(ref)
-        return processed
+        return processed + self._reconcile_recent_open_transitions()
 
     def reconcile_all(self, *, force_refresh_state: bool = False) -> int:
         reconciled = 0
@@ -300,6 +379,10 @@ class ReconcileEngine:
                 if force_refresh_state or previous is None or previous != meta:
                     candidates.append(ref)
                 self._pr_meta[ref] = self._meta_from_pr(pr)
+                if pr.state == PullRequestState.OPEN:
+                    self._track_recent_open(ref)
+                else:
+                    self._untrack_recent_open(ref)
                 self._route_watermarks[route.name] = self._merge_watermark(
                     self._route_watermarks.get(route.name),
                     pr.updated_at,
@@ -318,6 +401,10 @@ class ReconcileEngine:
                 if self._reconcile_pr(route, full_pr, force_refresh_state=force_refresh_state):
                     reconciled += 1
                 self._pr_meta[ref] = self._meta_from_pr(full_pr)
+                if full_pr.state == PullRequestState.OPEN:
+                    self._track_recent_open(ref)
+                else:
+                    self._untrack_recent_open(ref)
         return reconciled
 
     def reconcile_sweep(self) -> int:
@@ -333,6 +420,10 @@ class ReconcileEngine:
                     reconciled += 1
                 ref = self._make_ref(route, pr)
                 self._pr_meta[ref] = self._meta_from_pr(pr)
+                if pr.state == PullRequestState.OPEN:
+                    self._track_recent_open(ref)
+                else:
+                    self._untrack_recent_open(ref)
                 self._route_watermarks[route.name] = self._merge_watermark(
                     self._route_watermarks.get(route.name),
                     pr.updated_at,
