@@ -15,6 +15,7 @@ jobs:
     uses: mvs5465-test/.github/.github/workflows/docker-build.yml@main
     with:
       image_name: ${{ github.repository }}
+      push: ${{ github.ref == 'refs/heads/main' }}
       tags: |
         type=ref,event=branch
         type=sha,prefix={{branch}}-
