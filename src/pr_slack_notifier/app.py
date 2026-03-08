@@ -32,10 +32,13 @@ def _loop_resources(settings) -> dict[str, set[str]]:
     deep_resources = {"core"}
     if has_org_wide:
         deep_resources.add("search")
+    sweep_resources = set(deep_resources)
+    if has_org_wide:
+        sweep_resources.add("graphql")
     return {
         "lightweight": lightweight_resources,
         "deep": deep_resources,
-        "sweep": set(deep_resources),
+        "sweep": sweep_resources,
     }
 
 
@@ -135,8 +138,8 @@ def run_forever() -> None:
                 if now >= next_deep_at:
                     run_loop("deep", engine.reconcile_changed)
                     next_deep_at = now + settings.deep_reconcile_interval_seconds
-                if settings.enable_sweep_reconcile and now >= next_sweep_at:
-                    run_loop("sweep", lambda: engine.reconcile_all(force_refresh_state=True))
+                if now >= next_sweep_at:
+                    run_loop("sweep", engine.reconcile_sweep)
                     next_sweep_at = now + settings.sweep_reconcile_interval_seconds
             except Exception:
                 observe_reconcile_error("cycle")

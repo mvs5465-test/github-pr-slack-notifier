@@ -36,6 +36,20 @@ class GitHubAdapter(Protocol):
     def upsert_bot_state_comment(self, pr: PullRequestSnapshot, body: str) -> None:
         ...
 
+    def get_pull_request(
+        self,
+        route: RouteConfig,
+        *,
+        org: str,
+        repo: str,
+        number: int,
+        include_enrichment: bool = True,
+    ) -> PullRequestSnapshot | None:
+        ...
+
+    def list_pull_requests_for_sweep(self, route: RouteConfig) -> list[PullRequestSnapshot]:
+        ...
+
 
 class SlackAdapter(Protocol):
     def post_message(self, channel: str, text: str) -> str:
@@ -99,6 +113,10 @@ class ReconcileEngine:
         if current is None or candidate > current:
             return candidate
         return current
+
+    @staticmethod
+    def _is_graphql_sweep_route(route: RouteConfig) -> bool:
+        return not any(ch in route.org_pattern for ch in "*?[]") and route.repo_pattern == "*"
 
     def _should_skip_historical_closed(self, pr: PullRequestSnapshot, existing_comment: str | None) -> bool:
         if self.enable_historical_closed_prs:
@@ -170,6 +188,19 @@ class ReconcileEngine:
                 message_ref = existing.message if existing else SlackMessageRef(channel=route.channel, ts="")
 
                 for action in plan.actions:
+                    self.log.info(
+                        "reconcile.action kind=%s reason=%s",
+                        action.kind.value,
+                        action.reason or "",
+                        extra={
+                            "route": route.name,
+                            "org": pr.org,
+                            "repo": pr.repo,
+                            "pull_number": pr.number,
+                            "action_kind": action.kind.value,
+                            "dry_run": self.dry_run,
+                        },
+                    )
                     observe_reconcile_action(action.kind.value)
                     if action.kind == ActionKind.POST_MESSAGE:
                         ts = self.slack.post_message(action.payload["channel"], action.payload["text"])
@@ -232,15 +263,14 @@ class ReconcileEngine:
             route = self._routes_by_name.get(route_name)
             if route is None:
                 continue
-            prs = self.github.list_pull_requests(
-                route,
-                include_enrichment=True,
-                updated_after=None,
-            )
-            observe_route_pr_snapshot(route.name, prs)
-            prs_index = {(pr.org, pr.repo, pr.number): pr for pr in prs}
             for ref in route_refs:
-                target = prs_index.get((ref.org, ref.repo, ref.number))
+                target = self.github.get_pull_request(
+                    route,
+                    org=ref.org,
+                    repo=ref.repo,
+                    number=ref.number,
+                    include_enrichment=True,
+                )
                 if target is None:
                     self._pending_changed.discard(ref)
                     continue
@@ -260,8 +290,44 @@ class ReconcileEngine:
         for route in self.routes:
             with self._tracer.start_as_current_span("reconcile_route") as span:
                 span.set_attribute("route.name", route.name)
-                prs = self.github.list_pull_requests(route, include_enrichment=True)
+                prs = self.github.list_pull_requests(route, include_enrichment=False)
             observe_route_pr_snapshot(route.name, prs)
+            candidates: list[_PrRef] = []
+            for pr in prs:
+                ref = self._make_ref(route, pr)
+                meta = self._meta_from_pr(pr)
+                previous = self._pr_meta.get(ref)
+                if force_refresh_state or previous is None or previous != meta:
+                    candidates.append(ref)
+                self._pr_meta[ref] = self._meta_from_pr(pr)
+                self._route_watermarks[route.name] = self._merge_watermark(
+                    self._route_watermarks.get(route.name),
+                    pr.updated_at,
+                )
+                self._pending_changed.discard(ref)
+            for ref in candidates:
+                full_pr = self.github.get_pull_request(
+                    route,
+                    org=ref.org,
+                    repo=ref.repo,
+                    number=ref.number,
+                    include_enrichment=True,
+                )
+                if full_pr is None:
+                    continue
+                if self._reconcile_pr(route, full_pr, force_refresh_state=force_refresh_state):
+                    reconciled += 1
+                self._pr_meta[ref] = self._meta_from_pr(full_pr)
+        return reconciled
+
+    def reconcile_sweep(self) -> int:
+        reconciled = 0
+        for route in self.routes:
+            with self._tracer.start_as_current_span("reconcile_route_sweep") as span:
+                span.set_attribute("route.name", route.name)
+                prs = self.github.list_pull_requests_for_sweep(route)
+            observe_route_pr_snapshot(route.name, prs)
+            force_refresh_state = not self._is_graphql_sweep_route(route)
             for pr in prs:
                 if self._reconcile_pr(route, pr, force_refresh_state=force_refresh_state):
                     reconciled += 1

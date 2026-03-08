@@ -15,7 +15,6 @@ def _settings() -> Settings:
         polling_interval_seconds=1,
         deep_reconcile_interval_seconds=1,
         sweep_reconcile_interval_seconds=60,
-        enable_sweep_reconcile=False,
         rate_limit_backoff_seconds=30,
         rate_limit_backoff_max_seconds=120,
         error_retry_seconds=5,
@@ -31,6 +30,13 @@ def _settings() -> Settings:
     )
 
 
+def test_loop_resources_org_wide_route_includes_graphql_for_sweep() -> None:
+    resources = app._loop_resources(_settings())
+    assert resources["lightweight"] == {"search"}
+    assert resources["deep"] == {"core", "search"}
+    assert resources["sweep"] == {"core", "search", "graphql"}
+
+
 def test_validate_settings_missing_required(monkeypatch) -> None:
     monkeypatch.setattr(
         app,
@@ -43,7 +49,6 @@ def test_validate_settings_missing_required(monkeypatch) -> None:
             polling_interval_seconds=30,
             deep_reconcile_interval_seconds=30,
             sweep_reconcile_interval_seconds=600,
-            enable_sweep_reconcile=False,
             rate_limit_backoff_seconds=60,
             rate_limit_backoff_max_seconds=900,
             error_retry_seconds=10,
@@ -76,9 +81,8 @@ def test_run_forever_runs_single_iteration(monkeypatch) -> None:
         def reconcile_changed(self):
             self.changed_calls += 1
 
-        def reconcile_all(self, *, force_refresh_state: bool):
+        def reconcile_sweep(self):
             self.sweep_calls += 1
-            assert force_refresh_state is True
 
     state = {"engine": None, "github": None, "slack": None}
 
@@ -113,7 +117,7 @@ def test_run_forever_runs_single_iteration(monkeypatch) -> None:
     assert state["engine"] is not None
     assert state["engine"].refresh_calls == 1
     assert state["engine"].changed_calls == 1
-    assert state["engine"].sweep_calls == 0
+    assert state["engine"].sweep_calls == 1
     assert state["github"]["app_id"] == "123"
     assert "BEGIN PRIVATE KEY" in state["github"]["private_key_pem"]
     assert state["slack"]["bot_token"] == "xoxb-test"
@@ -128,7 +132,7 @@ def test_run_forever_retries_on_rate_limit_without_crashing(monkeypatch) -> None
         def reconcile_changed(self):
             raise AssertionError("should not be called")
 
-        def reconcile_all(self, *, force_refresh_state: bool):
+        def reconcile_sweep(self):
             raise AssertionError("should not be called")
 
     sleeps: list[float] = []
@@ -173,7 +177,7 @@ def test_run_forever_retries_on_generic_error_without_crashing(monkeypatch) -> N
         def reconcile_changed(self):
             raise AssertionError("should not be called")
 
-        def reconcile_all(self, *, force_refresh_state: bool):
+        def reconcile_sweep(self):
             raise AssertionError("should not be called")
 
     sleeps: list[float] = []
@@ -200,7 +204,7 @@ def test_run_forever_retries_on_generic_error_without_crashing(monkeypatch) -> N
     assert sleeps == [5]
 
 
-def test_run_forever_runs_sweep_when_enabled(monkeypatch) -> None:
+def test_run_forever_runs_sweep(monkeypatch) -> None:
     class FakeEngine:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
@@ -214,9 +218,8 @@ def test_run_forever_runs_sweep_when_enabled(monkeypatch) -> None:
         def reconcile_changed(self):
             self.changed_calls += 1
 
-        def reconcile_all(self, *, force_refresh_state: bool):
+        def reconcile_sweep(self):
             self.sweep_calls += 1
-            assert force_refresh_state is True
 
     state = {"engine": None}
 
@@ -228,32 +231,7 @@ def test_run_forever_runs_sweep_when_enabled(monkeypatch) -> None:
     def fake_sleep(_seconds):
         raise RuntimeError("stop")
 
-    def settings_with_sweep() -> Settings:
-        s = _settings()
-        return Settings(
-            github_app_id=s.github_app_id,
-            github_app_private_key=s.github_app_private_key,
-            github_installation_ids=s.github_installation_ids,
-            slack_bot_token=s.slack_bot_token,
-            polling_interval_seconds=s.polling_interval_seconds,
-            deep_reconcile_interval_seconds=s.deep_reconcile_interval_seconds,
-            sweep_reconcile_interval_seconds=s.sweep_reconcile_interval_seconds,
-            enable_sweep_reconcile=True,
-            rate_limit_backoff_seconds=s.rate_limit_backoff_seconds,
-            rate_limit_backoff_max_seconds=s.rate_limit_backoff_max_seconds,
-            error_retry_seconds=s.error_retry_seconds,
-            enable_historical_closed_prs=s.enable_historical_closed_prs,
-            dry_run=s.dry_run,
-            routes=s.routes,
-            log_level=s.log_level,
-            json_logs=s.json_logs,
-            metrics_enabled=s.metrics_enabled,
-            metrics_port=s.metrics_port,
-            otel_service_name=s.otel_service_name,
-            otel_otlp_endpoint=s.otel_otlp_endpoint,
-        )
-
-    monkeypatch.setattr(app, "load_settings_from_env", settings_with_sweep)
+    monkeypatch.setattr(app, "load_settings_from_env", _settings)
     monkeypatch.setattr(app, "ReconcileEngine", fake_engine_ctor)
     monkeypatch.setattr(app, "GitHubAppAdapter", lambda **_kwargs: object())
     monkeypatch.setattr(app, "SlackApiAdapter", lambda **_kwargs: object())
@@ -286,9 +264,8 @@ def test_run_forever_deep_runs_when_search_blocked_but_core_available(monkeypatc
         def reconcile_changed(self):
             self.changed_calls += 1
 
-        def reconcile_all(self, *, force_refresh_state: bool):
+        def reconcile_sweep(self):
             self.sweep_calls += 1
-            assert force_refresh_state is True
 
     state = {"engine": None}
     rate_limit_events: list[tuple[str, str, int]] = []
@@ -311,7 +288,6 @@ def test_run_forever_deep_runs_when_search_blocked_but_core_available(monkeypatc
             polling_interval_seconds=s.polling_interval_seconds,
             deep_reconcile_interval_seconds=s.deep_reconcile_interval_seconds,
             sweep_reconcile_interval_seconds=s.sweep_reconcile_interval_seconds,
-            enable_sweep_reconcile=False,
             rate_limit_backoff_seconds=s.rate_limit_backoff_seconds,
             rate_limit_backoff_max_seconds=s.rate_limit_backoff_max_seconds,
             error_retry_seconds=s.error_retry_seconds,
@@ -343,5 +319,59 @@ def test_run_forever_deep_runs_when_search_blocked_but_core_available(monkeypatc
     assert state["engine"] is not None
     assert state["engine"].refresh_calls == 1
     assert state["engine"].changed_calls == 1
-    assert state["engine"].sweep_calls == 0
+    assert state["engine"].sweep_calls == 1
     assert rate_limit_events == [("loop", "search", 3)]
+
+
+def test_run_forever_blocks_sweep_when_graphql_resource_is_rate_limited(monkeypatch) -> None:
+    class FakeEngine:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.refresh_calls = 0
+            self.changed_calls = 0
+            self.sweep_calls = 0
+
+        def refresh_lightweight(self):
+            self.refresh_calls += 1
+
+        def reconcile_changed(self):
+            self.changed_calls += 1
+
+        def reconcile_sweep(self):
+            self.sweep_calls += 1
+            if self.sweep_calls == 1:
+                raise GitHubRateLimitError("rate", reset_at_epoch=105, resource="graphql")
+
+    state = {"engine": None}
+    rate_limit_events: list[tuple[str, str, int]] = []
+    sleeps: list[float] = []
+
+    def fake_engine_ctor(**kwargs):
+        engine = FakeEngine(**kwargs)
+        state["engine"] = engine
+        return engine
+
+    def fake_sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) >= 2:
+            raise RuntimeError("stop")
+
+    monkeypatch.setattr(app, "load_settings_from_env", _settings)
+    monkeypatch.setattr(app, "ReconcileEngine", fake_engine_ctor)
+    monkeypatch.setattr(app, "GitHubAppAdapter", lambda **_kwargs: object())
+    monkeypatch.setattr(app, "SlackApiAdapter", lambda **_kwargs: object())
+    monkeypatch.setattr(app, "configure_logging", lambda **_kwargs: None)
+    monkeypatch.setattr(app, "maybe_start_metrics_server", lambda **_kwargs: None)
+    monkeypatch.setattr(app, "configure_tracing", lambda **_kwargs: None)
+    monkeypatch.setattr(app, "observe_rate_limit", lambda stage, resource, retry: rate_limit_events.append((stage, resource, retry)))
+    monkeypatch.setattr(app.time, "sleep", fake_sleep)
+    monkeypatch.setattr(app.time, "time", lambda: 100.0)
+
+    with pytest.raises(RuntimeError, match="stop"):
+        app.run_forever()
+
+    assert state["engine"] is not None
+    assert state["engine"].refresh_calls == 2
+    assert state["engine"].changed_calls >= 1
+    assert state["engine"].sweep_calls == 1
+    assert rate_limit_events == [("loop", "graphql", 6)]

@@ -11,7 +11,6 @@ def test_load_settings_from_env(monkeypatch) -> None:
     monkeypatch.setenv("POLL_INTERVAL_SECONDS", "15")
     monkeypatch.setenv("DEEP_RECONCILE_INTERVAL_SECONDS", "20")
     monkeypatch.setenv("SWEEP_RECONCILE_INTERVAL_SECONDS", "300")
-    monkeypatch.setenv("ENABLE_SWEEP_RECONCILE", "true")
     monkeypatch.setenv("RATE_LIMIT_BACKOFF_SECONDS", "45")
     monkeypatch.setenv("RATE_LIMIT_BACKOFF_MAX_SECONDS", "500")
     monkeypatch.setenv("ERROR_RETRY_SECONDS", "12")
@@ -36,7 +35,6 @@ def test_load_settings_from_env(monkeypatch) -> None:
     assert settings.polling_interval_seconds == 15
     assert settings.deep_reconcile_interval_seconds == 20
     assert settings.sweep_reconcile_interval_seconds == 300
-    assert settings.enable_sweep_reconcile is True
     assert settings.rate_limit_backoff_seconds == 45
     assert settings.rate_limit_backoff_max_seconds == 500
     assert settings.error_retry_seconds == 12
@@ -61,7 +59,6 @@ def test_defaults_when_missing_env(monkeypatch) -> None:
         "POLL_INTERVAL_SECONDS",
         "DEEP_RECONCILE_INTERVAL_SECONDS",
         "SWEEP_RECONCILE_INTERVAL_SECONDS",
-        "ENABLE_SWEEP_RECONCILE",
         "RATE_LIMIT_BACKOFF_SECONDS",
         "RATE_LIMIT_BACKOFF_MAX_SECONDS",
         "ERROR_RETRY_SECONDS",
@@ -85,7 +82,6 @@ def test_defaults_when_missing_env(monkeypatch) -> None:
     assert settings.polling_interval_seconds == 30
     assert settings.deep_reconcile_interval_seconds == 30
     assert settings.sweep_reconcile_interval_seconds == 600
-    assert settings.enable_sweep_reconcile is False
     assert settings.rate_limit_backoff_seconds == 60
     assert settings.rate_limit_backoff_max_seconds == 900
     assert settings.error_retry_seconds == 10
