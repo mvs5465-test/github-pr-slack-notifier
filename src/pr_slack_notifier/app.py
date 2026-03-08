@@ -82,7 +82,7 @@ def run_forever() -> None:
                 if now >= next_deep_at:
                     run_loop("deep", engine.reconcile_changed)
                     next_deep_at = now + settings.deep_reconcile_interval_seconds
-                if now >= next_sweep_at:
+                if settings.enable_sweep_reconcile and now >= next_sweep_at:
                     run_loop("sweep", lambda: engine.reconcile_all(force_refresh_state=True))
                     next_sweep_at = now + settings.sweep_reconcile_interval_seconds
             except GitHubRateLimitError as err:
