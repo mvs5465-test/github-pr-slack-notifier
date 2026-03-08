@@ -4,8 +4,18 @@ on:
   pull_request:
     types: [opened, synchronize]
 
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+
 jobs:
   review:
     uses: mvs5465-test/.github/.github/workflows/claude-pr-review.yml@main
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
     secrets: inherit
-
