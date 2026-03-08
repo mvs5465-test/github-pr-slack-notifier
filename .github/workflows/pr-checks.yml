@@ -37,6 +37,9 @@ jobs:
       - name: Lint Helm chart
         run: helm lint chart/
 
+  ct-lint:
+    uses: mvs5465-test/.github/.github/workflows/ct-lint.yml@main
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref || github.run_id }}
   cancel-in-progress: true
