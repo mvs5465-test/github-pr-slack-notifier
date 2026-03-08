@@ -15,7 +15,6 @@ def _settings() -> Settings:
         polling_interval_seconds=1,
         deep_reconcile_interval_seconds=1,
         sweep_reconcile_interval_seconds=60,
-        enable_sweep_reconcile=False,
         rate_limit_backoff_seconds=30,
         rate_limit_backoff_max_seconds=120,
         error_retry_seconds=5,
@@ -43,7 +42,6 @@ def test_validate_settings_missing_required(monkeypatch) -> None:
             polling_interval_seconds=30,
             deep_reconcile_interval_seconds=30,
             sweep_reconcile_interval_seconds=600,
-            enable_sweep_reconcile=False,
             rate_limit_backoff_seconds=60,
             rate_limit_backoff_max_seconds=900,
             error_retry_seconds=10,
@@ -113,7 +111,7 @@ def test_run_forever_runs_single_iteration(monkeypatch) -> None:
     assert state["engine"] is not None
     assert state["engine"].refresh_calls == 1
     assert state["engine"].changed_calls == 1
-    assert state["engine"].sweep_calls == 0
+    assert state["engine"].sweep_calls == 1
     assert state["github"]["app_id"] == "123"
     assert "BEGIN PRIVATE KEY" in state["github"]["private_key_pem"]
     assert state["slack"]["bot_token"] == "xoxb-test"
@@ -200,7 +198,7 @@ def test_run_forever_retries_on_generic_error_without_crashing(monkeypatch) -> N
     assert sleeps == [5]
 
 
-def test_run_forever_runs_sweep_when_enabled(monkeypatch) -> None:
+def test_run_forever_runs_sweep(monkeypatch) -> None:
     class FakeEngine:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
@@ -228,32 +226,7 @@ def test_run_forever_runs_sweep_when_enabled(monkeypatch) -> None:
     def fake_sleep(_seconds):
         raise RuntimeError("stop")
 
-    def settings_with_sweep() -> Settings:
-        s = _settings()
-        return Settings(
-            github_app_id=s.github_app_id,
-            github_app_private_key=s.github_app_private_key,
-            github_installation_ids=s.github_installation_ids,
-            slack_bot_token=s.slack_bot_token,
-            polling_interval_seconds=s.polling_interval_seconds,
-            deep_reconcile_interval_seconds=s.deep_reconcile_interval_seconds,
-            sweep_reconcile_interval_seconds=s.sweep_reconcile_interval_seconds,
-            enable_sweep_reconcile=True,
-            rate_limit_backoff_seconds=s.rate_limit_backoff_seconds,
-            rate_limit_backoff_max_seconds=s.rate_limit_backoff_max_seconds,
-            error_retry_seconds=s.error_retry_seconds,
-            enable_historical_closed_prs=s.enable_historical_closed_prs,
-            dry_run=s.dry_run,
-            routes=s.routes,
-            log_level=s.log_level,
-            json_logs=s.json_logs,
-            metrics_enabled=s.metrics_enabled,
-            metrics_port=s.metrics_port,
-            otel_service_name=s.otel_service_name,
-            otel_otlp_endpoint=s.otel_otlp_endpoint,
-        )
-
-    monkeypatch.setattr(app, "load_settings_from_env", settings_with_sweep)
+    monkeypatch.setattr(app, "load_settings_from_env", _settings)
     monkeypatch.setattr(app, "ReconcileEngine", fake_engine_ctor)
     monkeypatch.setattr(app, "GitHubAppAdapter", lambda **_kwargs: object())
     monkeypatch.setattr(app, "SlackApiAdapter", lambda **_kwargs: object())
@@ -311,7 +284,6 @@ def test_run_forever_deep_runs_when_search_blocked_but_core_available(monkeypatc
             polling_interval_seconds=s.polling_interval_seconds,
             deep_reconcile_interval_seconds=s.deep_reconcile_interval_seconds,
             sweep_reconcile_interval_seconds=s.sweep_reconcile_interval_seconds,
-            enable_sweep_reconcile=False,
             rate_limit_backoff_seconds=s.rate_limit_backoff_seconds,
             rate_limit_backoff_max_seconds=s.rate_limit_backoff_max_seconds,
             error_retry_seconds=s.error_retry_seconds,
@@ -343,5 +315,5 @@ def test_run_forever_deep_runs_when_search_blocked_but_core_available(monkeypatc
     assert state["engine"] is not None
     assert state["engine"].refresh_calls == 1
     assert state["engine"].changed_calls == 1
-    assert state["engine"].sweep_calls == 0
+    assert state["engine"].sweep_calls == 1
     assert rate_limit_events == [("loop", "search", 3)]
