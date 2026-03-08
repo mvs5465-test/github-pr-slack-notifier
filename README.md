@@ -18,7 +18,7 @@ This is a production-ready scaffold with tested core logic:
 - Control loop: Argo-style multi-loop reconcile.
   - fast refresh loop: cheap PR metadata polling
   - deep reconcile loop: changed PRs only
-  - periodic sweep loop: full self-heal pass
+  - periodic sweep loop: self-heal pass over the latest 100 PRs (all states) per org route
 - Optional webhook path: hook handlers can enqueue immediate reconcile keys; polling remains source of truth.
 - Persisted state: message ref (`channel`, `ts`) + content fingerprint in a bot comment marker.
 - Idempotency: no-op when fingerprint is unchanged.
@@ -54,6 +54,11 @@ Environment variables:
 - `METRICS_PORT` (default `9000`, serves Prometheus `/metrics`)
 - `OTEL_SERVICE_NAME` (default `github-pr-slack-notifier`)
 - `OTEL_EXPORTER_OTLP_ENDPOINT` (optional, e.g. `http://alloy.monitoring.svc:4318/v1/traces`)
+
+Sweep behavior notes:
+- GraphQL sweep optimization is used only for routes with an explicit org (`org_pattern` without wildcards) and `repo_pattern="*"`.
+- Other route patterns fall back to the REST listing path.
+- `ENABLE_SWEEP_RECONCILE` was removed; sweep is always enabled and runs on `SWEEP_RECONCILE_INTERVAL_SECONDS`.
 
 ## Local development
 

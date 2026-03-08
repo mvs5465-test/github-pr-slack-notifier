@@ -24,7 +24,9 @@ class _InstallationToken:
 
 
 class GitHubApiError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class GitHubRateLimitError(GitHubApiError):
@@ -73,8 +75,6 @@ class GitHubAppAdapter:
         self._repo_list_cache: dict[int, tuple[float, list[tuple[str, str]]]] = {}
         self._repo_list_cache_ttl_seconds = 300
         self._tracer = trace.get_tracer(__name__)
-        self._graphql_repo_page_size = 100
-        self._graphql_pr_page_size = 50
 
     def _build_app_jwt(self) -> str:
         now = int(time.time())
@@ -144,7 +144,10 @@ class GitHubAppAdapter:
                         reset_at_epoch=reset_at_epoch,
                         resource=resource,
                     )
-            raise GitHubApiError(f"GitHub API {method} {path} failed: {response.status_code} {response.text}")
+            raise GitHubApiError(
+                f"GitHub API {method} {path} failed: {response.status_code} {response.text}",
+                status_code=response.status_code,
+            )
         if response.text:
             return response.json()
         return None
@@ -224,7 +227,10 @@ class GitHubAppAdapter:
                 resource=resource or "graphql",
             )
         if response.status_code >= 400:
-            raise GitHubApiError(f"GitHub GraphQL request failed: {response.status_code} {response.text}")
+            raise GitHubApiError(
+                f"GitHub GraphQL request failed: {response.status_code} {response.text}",
+                status_code=response.status_code,
+            )
 
         payload = response.json() if response.text else {}
         errors = payload.get("errors", [])
@@ -440,43 +446,6 @@ class GitHubAppAdapter:
             page += 1
         return snapshots
 
-    def _graphql_list_org_repositories(self, token: str, org: str, repo_pattern: str) -> list[str]:
-        query = """
-        query($org: String!, $first: Int!, $after: String) {
-          organization(login: $org) {
-            repositories(first: $first, after: $after, orderBy: {field: UPDATED_AT, direction: DESC}) {
-              nodes { name }
-              pageInfo { hasNextPage endCursor }
-            }
-          }
-        }
-        """
-        repos: list[str] = []
-        after: str | None = None
-        while True:
-            data = self._graphql_request(
-                token=token,
-                query=query,
-                variables={"org": org, "first": self._graphql_repo_page_size, "after": after},
-            )
-            org_node = data.get("organization")
-            if not org_node:
-                break
-            repo_conn = org_node.get("repositories", {})
-            nodes = repo_conn.get("nodes", [])
-            for node in nodes:
-                name = str(node.get("name", ""))
-                if fnmatch.fnmatch(name, repo_pattern):
-                    repos.append(name)
-                    self._repo_installation_cache[(org, name)] = self.installation_ids[0]
-            page_info = repo_conn.get("pageInfo", {})
-            if not page_info.get("hasNextPage"):
-                break
-            after = page_info.get("endCursor")
-            if not after:
-                break
-        return repos
-
     def _checks_from_status_rollup(self, rollup: dict[str, Any] | None) -> tuple[CheckRun, ...]:
         if not rollup:
             return ()
@@ -564,17 +533,16 @@ class GitHubAppAdapter:
             updated_at=self._parse_updated_at(node.get("updatedAt")),
         )
 
-    def _graphql_list_repo_pull_requests(self, token: str, org: str, repo: str) -> list[PullRequestSnapshot]:
+    def _graphql_list_recent_pull_requests(self, token: str, org: str, limit: int = 100) -> list[PullRequestSnapshot]:
         query = """
-        query($org: String!, $repo: String!, $first: Int!, $after: String) {
-          repository(owner: $org, name: $repo) {
-            pullRequests(
-              first: $first,
-              after: $after,
-              states: [OPEN, CLOSED, MERGED],
-              orderBy: {field: UPDATED_AT, direction: DESC}
-            ) {
-              nodes {
+        query($query: String!, $first: Int!) {
+          search(
+            type: ISSUE,
+            query: $query,
+            first: $first
+          ) {
+            nodes {
+              ... on PullRequest {
                 number
                 title
                 url
@@ -585,6 +553,10 @@ class GitHubAppAdapter:
                 baseRefName
                 headRefOid
                 author { ... on User { login } }
+                repository {
+                  name
+                  owner { login }
+                }
                 labels(first: 20) { nodes { name } }
                 reviewRequests(first: 20) {
                   nodes {
@@ -620,50 +592,39 @@ class GitHubAppAdapter:
                   }
                 }
               }
-              pageInfo { hasNextPage endCursor }
             }
           }
         }
         """
+        data = self._graphql_request(
+            token=token,
+            query=query,
+            variables={
+                "query": f"org:{org} is:pr sort:updated-desc",
+                "first": limit,
+            },
+        )
+        search_conn = data.get("search", {})
+        nodes = search_conn.get("nodes", [])
         snapshots: list[PullRequestSnapshot] = []
-        after: str | None = None
-        while True:
-            data = self._graphql_request(
-                token=token,
-                query=query,
-                variables={
-                    "org": org,
-                    "repo": repo,
-                    "first": self._graphql_pr_page_size,
-                    "after": after,
-                },
-            )
-            repo_node = data.get("repository")
-            if not repo_node:
-                break
-            pr_conn = repo_node.get("pullRequests", {})
-            nodes = pr_conn.get("nodes", [])
-            for node in nodes:
-                snapshots.append(self._snapshot_from_graphql_pr(org=org, repo=repo, node=node))
-            page_info = pr_conn.get("pageInfo", {})
-            if not page_info.get("hasNextPage"):
-                break
-            after = page_info.get("endCursor")
-            if not after:
-                break
+        for node in nodes:
+            repo_node = node.get("repository") or {}
+            repo_name = str(repo_node.get("name", "")).strip()
+            owner = str((repo_node.get("owner") or {}).get("login", "")).strip()
+            if not repo_name or not owner:
+                continue
+            self._repo_installation_cache[(owner, repo_name)] = self.installation_ids[0]
+            snapshots.append(self._snapshot_from_graphql_pr(org=owner, repo=repo_name, node=node))
         return snapshots
 
     def list_pull_requests_for_sweep(self, route: RouteConfig) -> list[PullRequestSnapshot]:
         if any(ch in route.org_pattern for ch in "*?[]") or route.repo_pattern != "*":
             return self.list_pull_requests(route, include_enrichment=True, updated_after=None)
+        # GraphQL org-wide optimization currently assumes a single shared installation scope.
         installation_id = self.installation_ids[0]
         token = self._installation_token(installation_id)
         org = route.org_pattern
-        repos = self._graphql_list_org_repositories(token=token, org=org, repo_pattern=route.repo_pattern)
-        snapshots: list[PullRequestSnapshot] = []
-        for repo in repos:
-            snapshots.extend(self._graphql_list_repo_pull_requests(token=token, org=org, repo=repo))
-        return snapshots
+        return self._graphql_list_recent_pull_requests(token=token, org=org, limit=100)
 
     def _snapshot_from_payload(
         self,
@@ -776,7 +737,7 @@ class GitHubAppAdapter:
                 token=token,
             )
         except GitHubApiError as exc:
-            if " 404 " in str(exc):
+            if exc.status_code == 404:
                 return None
             raise
 

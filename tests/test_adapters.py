@@ -4,7 +4,13 @@ from datetime import datetime, timezone
 import httpx
 import pytest
 
-from pr_slack_notifier.adapters import GitHubAppAdapter, GitHubRateLimitError, SlackApiAdapter, normalize_private_key
+from pr_slack_notifier.adapters import (
+    GitHubApiError,
+    GitHubAppAdapter,
+    GitHubRateLimitError,
+    SlackApiAdapter,
+    normalize_private_key,
+)
 from pr_slack_notifier.models import (
     PullRequestSnapshot,
     PullRequestState,
@@ -427,6 +433,24 @@ def test_github_adapter_get_pull_request_returns_none_for_404() -> None:
     assert adapter.get_pull_request(route, org="acme", repo="service", number=404, include_enrichment=True) is None
 
 
+def test_github_adapter_get_pull_request_uses_status_code_for_404(monkeypatch) -> None:
+    adapter = GitHubAppAdapter(
+        app_id="123",
+        private_key_pem="unused",
+        installation_ids=(1,),
+    )
+    route = RouteConfig(name="default", org_pattern="acme", repo_pattern="*", channel="C1")
+    monkeypatch.setattr(adapter, "_token_for_repo", lambda _org, _repo: "inst-token")
+
+    def fake_request(_method: str, _path: str, token: str, json_body: dict | None = None):
+        assert token == "inst-token"
+        raise GitHubApiError("Not Found", status_code=404)
+
+    monkeypatch.setattr(adapter, "_request", fake_request)
+
+    assert adapter.get_pull_request(route, org="acme", repo="service", number=99, include_enrichment=True) is None
+
+
 def test_github_adapter_sweep_uses_graphql_and_includes_closed_and_merged(monkeypatch) -> None:
     calls: list[str] = []
     marker = render_state_marker(
@@ -444,89 +468,77 @@ def test_github_adapter_sweep_uses_graphql_and_includes_closed_and_merged(monkey
         if path == "/graphql":
             payload = json.loads(request.content.decode("utf-8"))
             query = payload["query"]
+            variables = payload["variables"]
             headers = {
                 "x-ratelimit-limit": "5000",
                 "x-ratelimit-remaining": "4000",
                 "x-ratelimit-reset": "2000",
                 "x-ratelimit-resource": "graphql",
             }
-            if "organization(login" in query:
-                return httpx.Response(
-                    status_code=200,
-                    headers=headers,
-                    json={
-                        "data": {
-                            "organization": {
-                                "repositories": {
-                                    "nodes": [{"name": "service"}],
-                                    "pageInfo": {"hasNextPage": False, "endCursor": None},
-                                }
-                            }
-                        }
-                    },
-                )
+            assert "search(" in query
+            assert variables["first"] == 100
+            assert variables["query"] == "org:acme is:pr sort:updated-desc"
             return httpx.Response(
                 status_code=200,
                 headers=headers,
                 json={
                     "data": {
-                        "repository": {
-                            "pullRequests": {
-                                "nodes": [
-                                    {
-                                        "number": 7,
-                                        "title": "Open PR",
-                                        "url": "https://github.com/acme/service/pull/7",
-                                        "state": "OPEN",
-                                        "mergedAt": None,
-                                        "updatedAt": "2026-03-08T01:00:00Z",
-                                        "reviewDecision": "APPROVED",
-                                        "baseRefName": "main",
-                                        "headRefOid": "sha-open",
-                                        "author": {"login": "matt"},
-                                        "labels": {"nodes": [{"name": "safe"}]},
-                                        "reviewRequests": {"nodes": []},
-                                        "comments": {"nodes": [{"databaseId": 77, "body": marker}]},
-                                        "commits": {
-                                            "nodes": [
-                                                {
-                                                    "commit": {
-                                                        "statusCheckRollup": {
-                                                            "contexts": {
-                                                                "nodes": [
-                                                                    {
-                                                                        "__typename": "CheckRun",
-                                                                        "name": "ci",
-                                                                        "status": "COMPLETED",
-                                                                        "conclusion": "SUCCESS",
-                                                                    }
-                                                                ]
-                                                            }
+                        "search": {
+                            "nodes": [
+                                {
+                                    "number": 7,
+                                    "title": "Open PR",
+                                    "url": "https://github.com/acme/service/pull/7",
+                                    "state": "OPEN",
+                                    "mergedAt": None,
+                                    "updatedAt": "2026-03-08T01:00:00Z",
+                                    "reviewDecision": "APPROVED",
+                                    "baseRefName": "main",
+                                    "headRefOid": "sha-open",
+                                    "author": {"login": "matt"},
+                                    "repository": {"name": "service", "owner": {"login": "acme"}},
+                                    "labels": {"nodes": [{"name": "safe"}]},
+                                    "reviewRequests": {"nodes": []},
+                                    "comments": {"nodes": [{"databaseId": 77, "body": marker}]},
+                                    "commits": {
+                                        "nodes": [
+                                            {
+                                                "commit": {
+                                                    "statusCheckRollup": {
+                                                        "contexts": {
+                                                            "nodes": [
+                                                                {
+                                                                    "__typename": "CheckRun",
+                                                                    "name": "ci",
+                                                                    "status": "COMPLETED",
+                                                                    "conclusion": "SUCCESS",
+                                                                }
+                                                            ]
                                                         }
                                                     }
                                                 }
-                                            ]
-                                        },
+                                            }
+                                        ]
                                     },
-                                    {
-                                        "number": 8,
-                                        "title": "Merged PR",
-                                        "url": "https://github.com/acme/service/pull/8",
-                                        "state": "CLOSED",
-                                        "mergedAt": "2026-03-08T00:00:00Z",
-                                        "updatedAt": "2026-03-08T01:05:00Z",
-                                        "reviewDecision": None,
-                                        "baseRefName": "main",
-                                        "headRefOid": "sha-merged",
-                                        "author": {"login": "jane"},
-                                        "labels": {"nodes": []},
-                                        "reviewRequests": {"nodes": []},
-                                        "comments": {"nodes": []},
-                                        "commits": {"nodes": []},
-                                    },
-                                ],
-                                "pageInfo": {"hasNextPage": False, "endCursor": None},
-                            }
+                                },
+                                {
+                                    "number": 8,
+                                    "title": "Merged PR",
+                                    "url": "https://github.com/acme/service/pull/8",
+                                    "state": "CLOSED",
+                                    "mergedAt": "2026-03-08T00:00:00Z",
+                                    "updatedAt": "2026-03-08T01:05:00Z",
+                                    "reviewDecision": None,
+                                    "baseRefName": "main",
+                                    "headRefOid": "sha-merged",
+                                    "author": {"login": "jane"},
+                                    "repository": {"name": "service", "owner": {"login": "acme"}},
+                                    "labels": {"nodes": []},
+                                    "reviewRequests": {"nodes": []},
+                                    "comments": {"nodes": []},
+                                    "commits": {"nodes": []},
+                                },
+                            ]
                         }
                     }
                 },
@@ -564,35 +576,21 @@ def test_github_adapter_sweep_graphql_applies_proportional_backpressure(monkeypa
         if path == "/graphql":
             payload = json.loads(request.content.decode("utf-8"))
             query = payload["query"]
+            variables = payload["variables"]
             headers = {
                 "x-ratelimit-limit": "5000",
                 "x-ratelimit-remaining": "10",
                 "x-ratelimit-reset": "1100",
                 "x-ratelimit-resource": "graphql",
             }
-            if "organization(login" in query:
-                return httpx.Response(
-                    status_code=200,
-                    headers=headers,
-                    json={
-                        "data": {
-                            "organization": {
-                                "repositories": {
-                                    "nodes": [{"name": "service"}],
-                                    "pageInfo": {"hasNextPage": False, "endCursor": None},
-                                }
-                            }
-                        }
-                    },
-                )
+            assert "search(" in query
+            assert variables["first"] == 100
             return httpx.Response(
                 status_code=200,
                 headers=headers,
                 json={
                     "data": {
-                        "repository": {
-                            "pullRequests": {"nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}
-                        }
+                        "search": {"nodes": []}
                     }
                 },
             )
@@ -611,7 +609,7 @@ def test_github_adapter_sweep_graphql_applies_proportional_backpressure(monkeypa
     route = RouteConfig(name="default", org_pattern="acme", repo_pattern="*", channel="C1")
 
     adapter.list_pull_requests_for_sweep(route)
-    assert len(sleeps) >= 2
+    assert len(sleeps) >= 1
     assert all(value > 0 for value in sleeps)
 
 
