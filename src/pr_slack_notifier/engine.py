@@ -121,13 +121,24 @@ class ReconcileEngine:
     def _is_graphql_sweep_route(route: RouteConfig) -> bool:
         return not any(ch in route.org_pattern for ch in "*?[]") and route.repo_pattern == "*"
 
+    @staticmethod
+    def _plan_has_state_change(actions: tuple[Action, ...]) -> bool:
+        for action in actions:
+            if action.kind in {ActionKind.POST_MESSAGE, ActionKind.UPDATE_MESSAGE}:
+                return True
+            if action.kind == ActionKind.LOG_ONLY and action.reason == "dry_run":
+                would = str(action.payload.get("would", ""))
+                if would in {"post_message", "update_message"}:
+                    return True
+        return False
+
     def _track_recent_open(self, ref: _PrRef, *, now_monotonic: float | None = None) -> None:
         self._recent_open_refs[ref] = now_monotonic if now_monotonic is not None else time.monotonic()
 
     def _untrack_recent_open(self, ref: _PrRef) -> None:
         self._recent_open_refs.pop(ref, None)
 
-    def _reconcile_recent_open_transitions(self) -> int:
+    def _reconcile_recent_open_transitions(self, *, skip_refs: set[_PrRef] | None = None) -> int:
         if not self._recent_open_refs:
             return 0
 
@@ -142,6 +153,8 @@ class ReconcileEngine:
         for ref in sorted(self._recent_open_refs, key=lambda item: (item.route_name, item.org, item.repo, item.number)):
             if probes >= self._recent_open_probe_limit:
                 break
+            if skip_refs and ref in skip_refs:
+                continue
             if ref in self._pending_changed:
                 continue
             route = self._routes_by_name.get(ref.route_name)
@@ -169,10 +182,6 @@ class ReconcileEngine:
                 current.updated_at,
             )
 
-            if current.state == PullRequestState.OPEN:
-                self._track_recent_open(ref, now_monotonic=now_monotonic)
-                continue
-
             full_pr = self.github.get_pull_request(
                 route,
                 org=ref.org,
@@ -186,7 +195,10 @@ class ReconcileEngine:
                 reconciled += 1
             self._pr_meta[ref] = self._meta_from_pr(full_pr)
             self._pending_changed.discard(ref)
-            self._untrack_recent_open(ref)
+            if full_pr.state == PullRequestState.OPEN:
+                self._track_recent_open(ref, now_monotonic=now_monotonic)
+            else:
+                self._untrack_recent_open(ref)
 
         return reconciled
 
@@ -259,6 +271,7 @@ class ReconcileEngine:
                     dry_run=self.dry_run,
                     plugins=self.plugins,
                 )
+                changed = self._plan_has_state_change(plan.actions)
                 message_ref = existing.message if existing else SlackMessageRef(channel=route.channel, ts="")
 
                 for action in plan.actions:
@@ -321,13 +334,14 @@ class ReconcileEngine:
             status.approval.value,
             status.checks.value,
         )
-        return True
+        return changed
 
     def reconcile_changed(self) -> int:
         if not self._pending_changed:
             return self._reconcile_recent_open_transitions()
 
         processed = 0
+        processed_refs: set[_PrRef] = set()
         refs = sorted(self._pending_changed, key=lambda ref: (ref.route_name, ref.org, ref.repo, ref.number))
         refs_by_route: dict[str, list[_PrRef]] = {}
         for ref in refs:
@@ -349,6 +363,7 @@ class ReconcileEngine:
                     self._pending_changed.discard(ref)
                     self._untrack_recent_open(ref)
                     continue
+                processed_refs.add(ref)
                 if self._reconcile_pr(route, target, force_refresh_state=False):
                     processed += 1
                 if target.state == PullRequestState.OPEN:
@@ -362,7 +377,7 @@ class ReconcileEngine:
             route = self._routes_by_name.get(ref.route_name)
             if route is None:
                 self._pending_changed.discard(ref)
-        return processed + self._reconcile_recent_open_transitions()
+        return processed + self._reconcile_recent_open_transitions(skip_refs=processed_refs)
 
     def reconcile_all(self, *, force_refresh_state: bool = False) -> int:
         reconciled = 0
