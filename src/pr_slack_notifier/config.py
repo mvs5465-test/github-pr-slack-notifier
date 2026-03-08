@@ -16,6 +16,7 @@ class Settings:
     polling_interval_seconds: int
     deep_reconcile_interval_seconds: int
     sweep_reconcile_interval_seconds: int
+    enable_sweep_reconcile: bool
     rate_limit_backoff_seconds: int
     rate_limit_backoff_max_seconds: int
     error_retry_seconds: int
@@ -68,6 +69,7 @@ def load_settings_from_env() -> Settings:
         polling_interval_seconds=int(os.getenv("POLL_INTERVAL_SECONDS", "30")),
         deep_reconcile_interval_seconds=int(os.getenv("DEEP_RECONCILE_INTERVAL_SECONDS", "30")),
         sweep_reconcile_interval_seconds=int(os.getenv("SWEEP_RECONCILE_INTERVAL_SECONDS", "600")),
+        enable_sweep_reconcile=_parse_bool(os.getenv("ENABLE_SWEEP_RECONCILE"), default=False),
         rate_limit_backoff_seconds=int(os.getenv("RATE_LIMIT_BACKOFF_SECONDS", "60")),
         rate_limit_backoff_max_seconds=int(os.getenv("RATE_LIMIT_BACKOFF_MAX_SECONDS", "900")),
         error_retry_seconds=int(os.getenv("ERROR_RETRY_SECONDS", "10")),
