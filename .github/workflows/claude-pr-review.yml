@@ -1,4 +1,4 @@
-name: Claude PR Review
+name: Codex PR Review
 
 on:
   pull_request:
@@ -7,9 +7,8 @@ on:
 jobs:
   review:
     permissions:
-      contents: write
+      contents: read
       pull-requests: write
       issues: write
-      id-token: write
-    uses: mvs5465-test/.github/.github/workflows/claude-pr-review.yml@main
+    uses: mvs5465-test/.github/.github/workflows/codex-pr-review.yml@main
     secrets: inherit
