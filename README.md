@@ -7,7 +7,7 @@ Reliable reconciliation-based notifier that keeps one Slack message per GitHub P
 This is a production-ready scaffold with tested core logic:
 - deterministic reconciliation planner
 - hidden GitHub comment state marker (`<!-- pr-slack-notifier:{...} -->`)
-- dry-run/evaluation mode
+- dry-run/evaluation mode test
 - multi-route channel mapping (org/repo pattern to Slack channel)
 - plugin contract (`on_plan`) and sample behavior in tests
 - GitHub App + Slack API adapters
