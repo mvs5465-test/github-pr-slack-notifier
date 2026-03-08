@@ -32,10 +32,13 @@ def _loop_resources(settings) -> dict[str, set[str]]:
     deep_resources = {"core"}
     if has_org_wide:
         deep_resources.add("search")
+    sweep_resources = set(deep_resources)
+    if has_org_wide:
+        sweep_resources.add("graphql")
     return {
         "lightweight": lightweight_resources,
         "deep": deep_resources,
-        "sweep": set(deep_resources),
+        "sweep": sweep_resources,
     }
 
 

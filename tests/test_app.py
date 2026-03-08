@@ -30,6 +30,13 @@ def _settings() -> Settings:
     )
 
 
+def test_loop_resources_org_wide_route_includes_graphql_for_sweep() -> None:
+    resources = app._loop_resources(_settings())
+    assert resources["lightweight"] == {"search"}
+    assert resources["deep"] == {"core", "search"}
+    assert resources["sweep"] == {"core", "search", "graphql"}
+
+
 def test_validate_settings_missing_required(monkeypatch) -> None:
     monkeypatch.setattr(
         app,
@@ -314,3 +321,57 @@ def test_run_forever_deep_runs_when_search_blocked_but_core_available(monkeypatc
     assert state["engine"].changed_calls == 1
     assert state["engine"].sweep_calls == 1
     assert rate_limit_events == [("loop", "search", 3)]
+
+
+def test_run_forever_blocks_sweep_when_graphql_resource_is_rate_limited(monkeypatch) -> None:
+    class FakeEngine:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.refresh_calls = 0
+            self.changed_calls = 0
+            self.sweep_calls = 0
+
+        def refresh_lightweight(self):
+            self.refresh_calls += 1
+
+        def reconcile_changed(self):
+            self.changed_calls += 1
+
+        def reconcile_sweep(self):
+            self.sweep_calls += 1
+            if self.sweep_calls == 1:
+                raise GitHubRateLimitError("rate", reset_at_epoch=105, resource="graphql")
+
+    state = {"engine": None}
+    rate_limit_events: list[tuple[str, str, int]] = []
+    sleeps: list[float] = []
+
+    def fake_engine_ctor(**kwargs):
+        engine = FakeEngine(**kwargs)
+        state["engine"] = engine
+        return engine
+
+    def fake_sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) >= 2:
+            raise RuntimeError("stop")
+
+    monkeypatch.setattr(app, "load_settings_from_env", _settings)
+    monkeypatch.setattr(app, "ReconcileEngine", fake_engine_ctor)
+    monkeypatch.setattr(app, "GitHubAppAdapter", lambda **_kwargs: object())
+    monkeypatch.setattr(app, "SlackApiAdapter", lambda **_kwargs: object())
+    monkeypatch.setattr(app, "configure_logging", lambda **_kwargs: None)
+    monkeypatch.setattr(app, "maybe_start_metrics_server", lambda **_kwargs: None)
+    monkeypatch.setattr(app, "configure_tracing", lambda **_kwargs: None)
+    monkeypatch.setattr(app, "observe_rate_limit", lambda stage, resource, retry: rate_limit_events.append((stage, resource, retry)))
+    monkeypatch.setattr(app.time, "sleep", fake_sleep)
+    monkeypatch.setattr(app.time, "time", lambda: 100.0)
+
+    with pytest.raises(RuntimeError, match="stop"):
+        app.run_forever()
+
+    assert state["engine"] is not None
+    assert state["engine"].refresh_calls == 2
+    assert state["engine"].changed_calls >= 1
+    assert state["engine"].sweep_calls == 1
+    assert rate_limit_events == [("loop", "graphql", 6)]
