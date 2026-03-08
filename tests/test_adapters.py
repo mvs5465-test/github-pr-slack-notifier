@@ -36,16 +36,17 @@ def test_github_adapter_lists_prs_and_comments() -> None:
         path = request.url.path
         if path == "/app/installations/1/access_tokens":
             return _json_response({"token": "inst-token", "expires_at": "2099-01-01T00:00:00Z"})
-        if path == "/installation/repositories":
+        if path == "/search/issues":
             return _json_response(
                 {
-                    "repositories": [
-                        {"name": "service", "owner": {"login": "acme"}},
+                    "items": [
+                        {
+                            "number": 7,
+                            "repository_url": "https://api.github.com/repos/acme/service",
+                        }
                     ]
                 }
             )
-        if path == "/repos/acme/service/pulls":
-            return _json_response([{"number": 7}])
         if path == "/repos/acme/service/pulls/7":
             return _json_response(
                 {
@@ -247,11 +248,32 @@ def test_github_adapter_lightweight_mode_and_updated_after_filter() -> None:
     assert "updated%3A%3E%3D2026-03-07T11%3A00%3A00Z" in search_calls[0][2]
 
 
-def test_github_adapter_lightweight_mode_requires_explicit_org() -> None:
+def test_github_adapter_lightweight_mode_wildcard_org_falls_back_to_repo_listing() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
         if path == "/app/installations/1/access_tokens":
             return _json_response({"token": "inst-token", "expires_at": "2099-01-01T00:00:00Z"})
+        if path == "/installation/repositories":
+            return _json_response({"repositories": [{"name": "service", "owner": {"login": "acme"}}]})
+        if path == "/repos/acme/service/pulls":
+            return _json_response(
+                [
+                    {
+                        "number": 8,
+                        "title": "New",
+                        "html_url": "https://github.com/acme/service/pull/8",
+                        "state": "open",
+                        "merged_at": None,
+                        "review_decision": None,
+                        "user": {"login": "matt"},
+                        "head": {"sha": "newsha"},
+                        "updated_at": "2026-03-07T12:00:00Z",
+                        "base": {"ref": "main"},
+                    }
+                ]
+            )
+        if path == "/search/issues":
+            raise AssertionError("search endpoint should not be used for wildcard org routes")
         raise AssertionError(f"unexpected request {request.method} {path}")
 
     client = httpx.Client(transport=httpx.MockTransport(handler), base_url="https://api.github.com")
@@ -263,8 +285,8 @@ def test_github_adapter_lightweight_mode_requires_explicit_org() -> None:
     )
     adapter._build_app_jwt = lambda: "app-jwt"  # type: ignore[method-assign]
     route = RouteConfig(name="default", org_pattern="ac*", repo_pattern="*", channel="C1")
-    with pytest.raises(RuntimeError, match="requires an explicit org_pattern"):
-        adapter.list_pull_requests(route, include_enrichment=False)
+    prs = adapter.list_pull_requests(route, include_enrichment=False)
+    assert [pr.number for pr in prs] == [8]
 
 
 def test_github_adapter_raises_rate_limit_error() -> None:
