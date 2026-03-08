@@ -222,6 +222,64 @@ def test_reconcile_changed_fetches_only_pending_prs() -> None:
     assert ("default", True, None) not in gh.list_calls
 
 
+def test_reconcile_changed_detects_open_to_merged_transition_without_waiting_for_sweep() -> None:
+    route = RouteConfig(name="default", org_pattern="acme", repo_pattern="*", channel="C123")
+    open_pr = _pr(number=42, state=PullRequestState.OPEN)
+    merged_pr = _pr(number=42, state=PullRequestState.MERGED, updated_at=open_pr.updated_at + timedelta(minutes=1))
+
+    class TransitionGitHub:
+        def __init__(self):
+            self.phase = 0
+            self.comment = None
+            self.upserts: list[tuple[int, str]] = []
+            self.comment_calls = 0
+            self.force_refresh_flags: list[bool] = []
+            self.probe_calls: list[bool] = []
+
+        def list_pull_requests(self, _route, *, include_enrichment=True, updated_after=None):
+            if include_enrichment:
+                return []
+            items = [open_pr] if self.phase == 0 else []
+            if updated_after is None:
+                return list(items)
+            return [pr for pr in items if pr.updated_at is None or pr.updated_at >= updated_after]
+
+        def list_pull_requests_for_sweep(self, _route):
+            return []
+
+        def get_pull_request(self, _route, *, org: str, repo: str, number: int, include_enrichment: bool = True):
+            assert org == "acme"
+            assert repo == "widgets"
+            assert number == 42
+            self.probe_calls.append(include_enrichment)
+            if self.phase == 0:
+                return open_pr
+            return merged_pr
+
+        def get_bot_state_comment(self, _pr, *, force_refresh=False):
+            self.comment_calls += 1
+            self.force_refresh_flags.append(force_refresh)
+            return self.comment
+
+        def upsert_bot_state_comment(self, pr, body):
+            self.upserts.append((pr.number, body))
+
+    gh = TransitionGitHub()
+    slack = FakeSlack()
+    engine = ReconcileEngine(github=gh, slack=slack, routes=[route], dry_run=True)
+
+    assert engine.refresh_lightweight() == 1
+    assert engine.reconcile_changed() == 1  # initial open reconcile
+
+    gh.phase = 1
+    assert engine.refresh_lightweight() == 0  # open listing no longer returns merged PR
+    assert engine.reconcile_changed() == 1  # deep watchlist picks up merged transition
+    assert gh.probe_calls[-2:] == [False, True]
+
+    # Transitioned PR is evicted from open-watch set and not repeatedly reconciled.
+    assert engine.reconcile_changed() == 0
+
+
 def test_reconcile_all_soft_sweep_reconciles_only_changed_refs() -> None:
     route = RouteConfig(name="default", org_pattern="acme", repo_pattern="*", channel="C123")
     original = _pr(number=10, head_sha="sha-1")
