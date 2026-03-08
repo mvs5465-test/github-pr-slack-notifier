@@ -8,7 +8,7 @@ from typing import Protocol
 
 from opentelemetry import trace
 
-from .models import ActionKind, PullRequestSnapshot, PullRequestState, RouteConfig, SlackMessageRef
+from .models import Action, ActionKind, PullRequestSnapshot, PullRequestState, RouteConfig, SlackMessageRef
 from .observability import (
     observe_reconcile_action,
     observe_reconcile_error,
