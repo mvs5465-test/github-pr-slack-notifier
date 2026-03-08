@@ -19,6 +19,8 @@ from .plugins import Plugin
 from .reconcile import derive_status, plan_reconcile
 from .state import parse_state_marker, render_state_marker
 
+_ACTIVE_PR_STATES = {PullRequestState.OPEN, PullRequestState.DRAFT}
+
 
 class GitHubAdapter(Protocol):
     def list_pull_requests(
@@ -195,7 +197,7 @@ class ReconcileEngine:
                 reconciled += 1
             self._pr_meta[ref] = self._meta_from_pr(full_pr)
             self._pending_changed.discard(ref)
-            if full_pr.state == PullRequestState.OPEN:
+            if full_pr.state in _ACTIVE_PR_STATES:
                 self._track_recent_open(ref, now_monotonic=now_monotonic)
             else:
                 self._untrack_recent_open(ref)
@@ -232,7 +234,7 @@ class ReconcileEngine:
                     self._pending_changed.add(ref)
                     changed += 1
                 self._pr_meta[ref] = meta
-                if pr.state == PullRequestState.OPEN:
+                if pr.state in _ACTIVE_PR_STATES:
                     self._track_recent_open(ref)
                 self._route_watermarks[route.name] = self._merge_watermark(
                     self._route_watermarks.get(route.name),
@@ -366,7 +368,7 @@ class ReconcileEngine:
                 processed_refs.add(ref)
                 if self._reconcile_pr(route, target, force_refresh_state=False):
                     processed += 1
-                if target.state == PullRequestState.OPEN:
+                if target.state in _ACTIVE_PR_STATES:
                     self._track_recent_open(ref)
                 else:
                     self._untrack_recent_open(ref)
@@ -394,7 +396,7 @@ class ReconcileEngine:
                 if force_refresh_state or previous is None or previous != meta:
                     candidates.append(ref)
                 self._pr_meta[ref] = self._meta_from_pr(pr)
-                if pr.state == PullRequestState.OPEN:
+                if pr.state in _ACTIVE_PR_STATES:
                     self._track_recent_open(ref)
                 else:
                     self._untrack_recent_open(ref)
@@ -416,7 +418,7 @@ class ReconcileEngine:
                 if self._reconcile_pr(route, full_pr, force_refresh_state=force_refresh_state):
                     reconciled += 1
                 self._pr_meta[ref] = self._meta_from_pr(full_pr)
-                if full_pr.state == PullRequestState.OPEN:
+                if full_pr.state in _ACTIVE_PR_STATES:
                     self._track_recent_open(ref)
                 else:
                     self._untrack_recent_open(ref)
@@ -435,7 +437,7 @@ class ReconcileEngine:
                     reconciled += 1
                 ref = self._make_ref(route, pr)
                 self._pr_meta[ref] = self._meta_from_pr(pr)
-                if pr.state == PullRequestState.OPEN:
+                if pr.state in _ACTIVE_PR_STATES:
                     self._track_recent_open(ref)
                 else:
                     self._untrack_recent_open(ref)

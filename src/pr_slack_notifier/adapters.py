@@ -264,11 +264,13 @@ class GitHubAppAdapter:
         return data["token"]
 
     @staticmethod
-    def _pr_state(merged_at: str | None, state: str) -> PullRequestState:
+    def _pr_state(merged_at: str | None, state: str, *, is_draft: bool = False) -> PullRequestState:
         if merged_at:
             return PullRequestState.MERGED
         if state.lower() == "closed":
             return PullRequestState.CLOSED
+        if is_draft:
+            return PullRequestState.DRAFT
         return PullRequestState.OPEN
 
     def _iter_matching_repositories(self, route: RouteConfig, force_refresh: bool = False) -> list[tuple[int, str, str]]:
@@ -407,6 +409,7 @@ class GitHubAppAdapter:
                         "title": str(item.get("title", "")),
                         "html_url": str(item.get("html_url", "")),
                         "state": state_value,
+                        "draft": bool(item.get("draft", False)),
                         "merged_at": None,
                         "user": {"login": str(item.get("user", {}).get("login", ""))},
                         "head": {"sha": ""},
@@ -484,7 +487,11 @@ class GitHubAppAdapter:
     def _snapshot_from_graphql_pr(self, *, org: str, repo: str, node: dict[str, Any]) -> PullRequestSnapshot:
         pr_number = int(node["number"])
         merged_at = node.get("mergedAt")
-        state = self._pr_state(merged_at, str(node.get("state", "OPEN")))
+        state = self._pr_state(
+            merged_at,
+            str(node.get("state", "OPEN")),
+            is_draft=bool(node.get("isDraft", False)),
+        )
         review_requests = (node.get("reviewRequests") or {}).get("nodes") or []
         requested_reviewers: list[str] = []
         for req in review_requests:
@@ -547,6 +554,7 @@ class GitHubAppAdapter:
                 title
                 url
                 state
+                isDraft
                 mergedAt
                 updatedAt
                 reviewDecision
@@ -644,7 +652,11 @@ class GitHubAppAdapter:
             title=str(payload["title"]),
             url=str(payload["html_url"]),
             author=str(payload["user"]["login"]),
-            state=self._pr_state(payload.get("merged_at"), str(payload["state"])),
+            state=self._pr_state(
+                payload.get("merged_at"),
+                str(payload["state"]),
+                is_draft=bool(payload.get("draft", False)),
+            ),
             head_sha=str(payload.get("head", {}).get("sha", "")),
             review_decision=review_decision if review_decision is not None else payload.get("review_decision"),
             check_runs=check_runs,

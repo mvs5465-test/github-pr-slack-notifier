@@ -7,6 +7,7 @@ from enum import Enum
 
 class PullRequestState(str, Enum):
     OPEN = "open"
+    DRAFT = "draft"
     CLOSED = "closed"
     MERGED = "merged"
 

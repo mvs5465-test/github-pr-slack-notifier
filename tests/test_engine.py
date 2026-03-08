@@ -284,7 +284,7 @@ def test_reconcile_changed_detects_open_to_merged_transition_without_waiting_for
 def test_reconcile_changed_recent_open_probe_updates_open_check_transition() -> None:
     route = RouteConfig(name="default", org_pattern="acme", repo_pattern="*", channel="C123")
     base_updated_at = datetime.now(timezone.utc)
-    light_open = _pr(number=51, state=PullRequestState.OPEN, updated_at=base_updated_at, head_sha="sha-51")
+    light_open = _pr(number=51, state=PullRequestState.DRAFT, updated_at=base_updated_at, head_sha="sha-51")
     open_running = PullRequestSnapshot(
         org=light_open.org,
         repo=light_open.repo,
