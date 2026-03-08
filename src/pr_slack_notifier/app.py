@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from opentelemetry import trace
 
 from .adapters import GitHubAppAdapter, GitHubRateLimitError, SlackApiAdapter, normalize_private_key
 from .config import load_settings_from_env
 from .engine import ReconcileEngine
+from .models import RouteConfig
 from .observability import (
     configure_logging,
     configure_tracing,
@@ -16,6 +18,25 @@ from .observability import (
     observe_reconcile_loop,
     observe_rate_limit,
 )
+
+
+def _is_org_wide_route(route: RouteConfig) -> bool:
+    return not any(ch in route.org_pattern for ch in "*?[]") and route.repo_pattern == "*"
+
+
+def _loop_resources(settings) -> dict[str, set[str]]:
+    has_non_org_wide = any(not _is_org_wide_route(route) for route in settings.routes)
+    has_org_wide = any(_is_org_wide_route(route) for route in settings.routes)
+
+    lightweight_resources = {"search"} if not has_non_org_wide else {"search", "core"}
+    deep_resources = {"core"}
+    if has_org_wide:
+        deep_resources.add("search")
+    return {
+        "lightweight": lightweight_resources,
+        "deep": deep_resources,
+        "sweep": set(deep_resources),
+    }
 
 
 def _validate_settings() -> None:
@@ -58,17 +79,49 @@ def run_forever() -> None:
     tracer = trace.get_tracer(__name__)
     next_deep_at = 0.0
     next_sweep_at = 0.0
+    blocked_until: dict[str, float] = {}
     log = logging.getLogger(__name__)
+    loop_resources = _loop_resources(settings)
 
-    def run_loop(loop_name: str, fn) -> int:
+    def run_loop(loop_name: str, fn: Callable[[], int]) -> int:
         started_loop = time.monotonic()
+        now_epoch = time.time()
+        required = loop_resources.get(loop_name, {"core", "search"})
+        active = [resource for resource in required if blocked_until.get(resource, 0.0) > now_epoch]
+        if active:
+            retry_seconds = max(int(blocked_until[resource] - now_epoch) + 1 for resource in active)
+            log.info(
+                "reconcile.loop_blocked loop=%s resources=%s retry_seconds=%s",
+                loop_name,
+                ",".join(sorted(active)),
+                retry_seconds,
+            )
+            observe_reconcile_loop(loop_name, "blocked", time.monotonic() - started_loop, 0)
+            return 0
         try:
             items = fn()
             observe_reconcile_loop(loop_name, "ok", time.monotonic() - started_loop, items)
             return items
-        except GitHubRateLimitError:
+        except GitHubRateLimitError as err:
+            resource = (err.resource or "unknown").lower()
+            retry_seconds = err.retry_after_seconds(
+                now_epoch=time.time(),
+                default_seconds=settings.rate_limit_backoff_seconds,
+                max_seconds=settings.rate_limit_backoff_max_seconds,
+            )
+            unblock_at = time.time() + retry_seconds
+            if err.reset_at_epoch is not None:
+                unblock_at = err.reset_at_epoch
+            blocked_until[resource] = max(blocked_until.get(resource, 0.0), unblock_at)
+            observe_rate_limit("loop", resource, retry_seconds)
+            log.warning(
+                "reconcile.rate_limited loop=%s resource=%s sleeping_seconds=%s",
+                loop_name,
+                resource,
+                retry_seconds,
+            )
             observe_reconcile_loop(loop_name, "rate_limited", time.monotonic() - started_loop, 0)
-            raise
+            return 0
         except Exception:
             observe_reconcile_loop(loop_name, "error", time.monotonic() - started_loop, 0)
             raise
@@ -85,17 +138,6 @@ def run_forever() -> None:
                 if settings.enable_sweep_reconcile and now >= next_sweep_at:
                     run_loop("sweep", lambda: engine.reconcile_all(force_refresh_state=True))
                     next_sweep_at = now + settings.sweep_reconcile_interval_seconds
-            except GitHubRateLimitError as err:
-                observe_reconcile_error("cycle_rate_limit")
-                retry_seconds = err.retry_after_seconds(
-                    now_epoch=time.time(),
-                    default_seconds=settings.rate_limit_backoff_seconds,
-                    max_seconds=settings.rate_limit_backoff_max_seconds,
-                )
-                observe_rate_limit("cycle", retry_seconds)
-                log.warning("reconcile.rate_limited sleeping_seconds=%s", retry_seconds)
-                time.sleep(retry_seconds)
-                continue
             except Exception:
                 observe_reconcile_error("cycle")
                 log.exception("reconcile_cycle_failed")

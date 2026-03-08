@@ -123,7 +123,7 @@ def test_run_forever_runs_single_iteration(monkeypatch) -> None:
 def test_run_forever_retries_on_rate_limit_without_crashing(monkeypatch) -> None:
     class FakeEngine:
         def refresh_lightweight(self):
-            raise GitHubRateLimitError("rate", reset_at_epoch=101)
+            raise GitHubRateLimitError("rate", reset_at_epoch=101, resource="search")
 
         def reconcile_changed(self):
             raise AssertionError("should not be called")
@@ -133,6 +133,7 @@ def test_run_forever_retries_on_rate_limit_without_crashing(monkeypatch) -> None
 
     sleeps: list[float] = []
     state = {"calls": 0}
+    rate_limit_events: list[tuple[str, str, int]] = []
 
     def fake_engine_ctor(**_kwargs):
         return FakeEngine()
@@ -153,13 +154,15 @@ def test_run_forever_retries_on_rate_limit_without_crashing(monkeypatch) -> None
     monkeypatch.setattr(app, "configure_logging", lambda **_kwargs: None)
     monkeypatch.setattr(app, "maybe_start_metrics_server", lambda **_kwargs: None)
     monkeypatch.setattr(app, "configure_tracing", lambda **_kwargs: None)
+    monkeypatch.setattr(app, "observe_rate_limit", lambda stage, resource, retry: rate_limit_events.append((stage, resource, retry)))
     monkeypatch.setattr(app.time, "sleep", fake_sleep)
     monkeypatch.setattr(app.time, "time", fake_time)
 
     with pytest.raises(RuntimeError, match="stop"):
         app.run_forever()
 
-    assert sleeps == [2]
+    assert sleeps == [1]
+    assert rate_limit_events == [("loop", "search", 2)]
 
 
 def test_run_forever_retries_on_generic_error_without_crashing(monkeypatch) -> None:
@@ -266,3 +269,79 @@ def test_run_forever_runs_sweep_when_enabled(monkeypatch) -> None:
     assert state["engine"].refresh_calls == 1
     assert state["engine"].changed_calls == 1
     assert state["engine"].sweep_calls == 1
+
+
+def test_run_forever_deep_runs_when_search_blocked_but_core_available(monkeypatch) -> None:
+    class FakeEngine:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.refresh_calls = 0
+            self.changed_calls = 0
+            self.sweep_calls = 0
+
+        def refresh_lightweight(self):
+            self.refresh_calls += 1
+            raise GitHubRateLimitError("rate", reset_at_epoch=102, resource="search")
+
+        def reconcile_changed(self):
+            self.changed_calls += 1
+
+        def reconcile_all(self, *, force_refresh_state: bool):
+            self.sweep_calls += 1
+            assert force_refresh_state is True
+
+    state = {"engine": None}
+    rate_limit_events: list[tuple[str, str, int]] = []
+
+    def fake_engine_ctor(**kwargs):
+        engine = FakeEngine(**kwargs)
+        state["engine"] = engine
+        return engine
+
+    def fake_sleep(_seconds):
+        raise RuntimeError("stop")
+
+    def settings_with_wildcard_org() -> Settings:
+        s = _settings()
+        return Settings(
+            github_app_id=s.github_app_id,
+            github_app_private_key=s.github_app_private_key,
+            github_installation_ids=s.github_installation_ids,
+            slack_bot_token=s.slack_bot_token,
+            polling_interval_seconds=s.polling_interval_seconds,
+            deep_reconcile_interval_seconds=s.deep_reconcile_interval_seconds,
+            sweep_reconcile_interval_seconds=s.sweep_reconcile_interval_seconds,
+            enable_sweep_reconcile=False,
+            rate_limit_backoff_seconds=s.rate_limit_backoff_seconds,
+            rate_limit_backoff_max_seconds=s.rate_limit_backoff_max_seconds,
+            error_retry_seconds=s.error_retry_seconds,
+            enable_historical_closed_prs=s.enable_historical_closed_prs,
+            dry_run=s.dry_run,
+            routes=(RouteConfig(org_pattern="ac*", repo_pattern="*", channel="C1"),),
+            log_level=s.log_level,
+            json_logs=s.json_logs,
+            metrics_enabled=s.metrics_enabled,
+            metrics_port=s.metrics_port,
+            otel_service_name=s.otel_service_name,
+            otel_otlp_endpoint=s.otel_otlp_endpoint,
+        )
+
+    monkeypatch.setattr(app, "load_settings_from_env", settings_with_wildcard_org)
+    monkeypatch.setattr(app, "ReconcileEngine", fake_engine_ctor)
+    monkeypatch.setattr(app, "GitHubAppAdapter", lambda **_kwargs: object())
+    monkeypatch.setattr(app, "SlackApiAdapter", lambda **_kwargs: object())
+    monkeypatch.setattr(app, "configure_logging", lambda **_kwargs: None)
+    monkeypatch.setattr(app, "maybe_start_metrics_server", lambda **_kwargs: None)
+    monkeypatch.setattr(app, "configure_tracing", lambda **_kwargs: None)
+    monkeypatch.setattr(app, "observe_rate_limit", lambda stage, resource, retry: rate_limit_events.append((stage, resource, retry)))
+    monkeypatch.setattr(app.time, "sleep", fake_sleep)
+    monkeypatch.setattr(app.time, "time", lambda: 100.0)
+
+    with pytest.raises(RuntimeError, match="stop"):
+        app.run_forever()
+
+    assert state["engine"] is not None
+    assert state["engine"].refresh_calls == 1
+    assert state["engine"].changed_calls == 1
+    assert state["engine"].sweep_calls == 0
+    assert rate_limit_events == [("loop", "search", 3)]
