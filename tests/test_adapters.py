@@ -24,6 +24,11 @@ def test_normalize_private_key_handles_escaped_newlines() -> None:
     assert normalize_private_key(key) == "line1\nline2"
 
 
+def test_rate_limit_error_retry_uses_reset_without_max_clamp() -> None:
+    err = GitHubRateLimitError("rate", reset_at_epoch=300.0, resource="core")
+    assert err.retry_after_seconds(now_epoch=100.0, default_seconds=60, max_seconds=120) == 201
+
+
 def test_github_adapter_lists_prs_and_comments() -> None:
     marker = render_state_marker(
         ReconcileState(
@@ -297,7 +302,7 @@ def test_github_adapter_raises_rate_limit_error() -> None:
         if path == "/search/issues":
             return httpx.Response(
                 status_code=403,
-                headers={"x-ratelimit-reset": "200"},
+                headers={"x-ratelimit-reset": "200", "x-ratelimit-resource": "core"},
                 json={"message": "API rate limit exceeded for installation ID 1"},
             )
         raise AssertionError(f"unexpected request {request.method} {path}")
@@ -315,6 +320,7 @@ def test_github_adapter_raises_rate_limit_error() -> None:
     with pytest.raises(GitHubRateLimitError) as exc:
         adapter.list_pull_requests(route, include_enrichment=False)
     assert exc.value.reset_at_epoch == 200.0
+    assert exc.value.resource == "core"
 
 
 def test_github_adapter_proactively_uses_rate_limit_headers_on_success() -> None:
@@ -328,6 +334,7 @@ def test_github_adapter_proactively_uses_rate_limit_headers_on_success() -> None
                 headers={
                     "x-ratelimit-remaining": "0",
                     "x-ratelimit-reset": "300",
+                    "x-ratelimit-resource": "search",
                 },
                 json={"items": []},
             )
@@ -346,6 +353,7 @@ def test_github_adapter_proactively_uses_rate_limit_headers_on_success() -> None
     with pytest.raises(GitHubRateLimitError) as exc:
         adapter.list_pull_requests(route, include_enrichment=False)
     assert exc.value.reset_at_epoch == 300.0
+    assert exc.value.resource == "search"
 
 
 def test_slack_adapter_post_and_update() -> None:

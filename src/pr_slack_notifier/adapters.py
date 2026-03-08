@@ -28,9 +28,15 @@ class GitHubApiError(RuntimeError):
 
 
 class GitHubRateLimitError(GitHubApiError):
-    def __init__(self, message: str, reset_at_epoch: float | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        reset_at_epoch: float | None = None,
+        resource: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.reset_at_epoch = reset_at_epoch
+        self.resource = resource
 
     def retry_after_seconds(self, now_epoch: float, default_seconds: int, max_seconds: int) -> int:
         if self.reset_at_epoch is None:
@@ -38,7 +44,7 @@ class GitHubRateLimitError(GitHubApiError):
         retry = int(self.reset_at_epoch - now_epoch) + 1
         if retry < 1:
             retry = 1
-        return min(retry, max_seconds)
+        return retry
 
 
 class SlackApiError(RuntimeError):
@@ -111,6 +117,7 @@ class GitHubAppAdapter:
                 reset_at_epoch = float(reset_header)
             except ValueError:
                 reset_at_epoch = None
+        resource = response.headers.get("x-ratelimit-resource")
 
         # Proactive handling: if a successful response reports no remaining quota,
         # short-circuit now and let the control loop wait until reset.
@@ -118,6 +125,7 @@ class GitHubAppAdapter:
             raise GitHubRateLimitError(
                 f"GitHub API {method} {path} exhausted rate limit",
                 reset_at_epoch=reset_at_epoch,
+                resource=resource,
             )
 
         if response.status_code >= 400:
@@ -132,6 +140,7 @@ class GitHubAppAdapter:
                     raise GitHubRateLimitError(
                         f"GitHub API {method} {path} failed: {response.status_code} {response.text}",
                         reset_at_epoch=reset_at_epoch,
+                        resource=resource,
                     )
             raise GitHubApiError(f"GitHub API {method} {path} failed: {response.status_code} {response.text}")
         if response.text:
