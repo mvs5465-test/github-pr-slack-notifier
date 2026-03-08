@@ -200,43 +200,30 @@ def test_github_adapter_comment_cache_and_force_refresh() -> None:
 
 
 def test_github_adapter_lightweight_mode_and_updated_after_filter() -> None:
+    calls: list[tuple[str, str, str]] = []
+
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
+        calls.append((request.method, path, request.url.query.decode("utf-8")))
         if path == "/app/installations/1/access_tokens":
             return _json_response({"token": "inst-token", "expires_at": "2099-01-01T00:00:00Z"})
-        if path == "/installation/repositories":
-            return _json_response({"repositories": [{"name": "service", "owner": {"login": "acme"}}]})
-        if path == "/repos/acme/service/pulls":
+        if path == "/search/issues":
             return _json_response(
-                [
-                    {
-                        "number": 8,
-                        "title": "New",
-                        "html_url": "https://github.com/acme/service/pull/8",
-                        "state": "open",
-                        "merged_at": None,
-                        "review_decision": "APPROVED",
-                        "user": {"login": "matt"},
-                        "head": {"sha": "newsha"},
-                        "updated_at": "2026-03-07T12:00:00Z",
-                        "base": {"ref": "main"},
-                    },
-                    {
-                        "number": 7,
-                        "title": "Old",
-                        "html_url": "https://github.com/acme/service/pull/7",
-                        "state": "closed",
-                        "merged_at": None,
-                        "review_decision": None,
-                        "user": {"login": "matt"},
-                        "head": {"sha": "oldsha"},
-                        "updated_at": "2026-03-07T10:00:00Z",
-                        "base": {"ref": "main"},
-                    },
-                ]
+                {
+                    "items": [
+                        {
+                            "number": 8,
+                            "title": "New",
+                            "html_url": "https://github.com/acme/service/pull/8",
+                            "state": "open",
+                            "user": {"login": "matt"},
+                            "updated_at": "2026-03-07T12:00:00Z",
+                            "repository_url": "https://api.github.com/repos/acme/service",
+                            "labels": [{"name": "ready"}],
+                        },
+                    ]
+                }
             )
-        if path.startswith("/repos/acme/service/pulls/"):
-            raise AssertionError("details endpoint should not be called in lightweight mode")
         raise AssertionError(f"unexpected request {request.method} {path}")
 
     client = httpx.Client(transport=httpx.MockTransport(handler), base_url="https://api.github.com")
@@ -252,7 +239,32 @@ def test_github_adapter_lightweight_mode_and_updated_after_filter() -> None:
     cutoff = datetime(2026, 3, 7, 11, 0, tzinfo=timezone.utc)
     prs = adapter.list_pull_requests(route, include_enrichment=False, updated_after=cutoff)
     assert [pr.number for pr in prs] == [8]
-    assert prs[0].head_sha == "newsha"
+    assert prs[0].head_sha == ""
+    assert prs[0].labels == ("ready",)
+    search_calls = [call for call in calls if call[1] == "/search/issues"]
+    assert len(search_calls) == 1
+    assert "is%3Apr" in search_calls[0][2]
+    assert "updated%3A%3E%3D2026-03-07T11%3A00%3A00Z" in search_calls[0][2]
+
+
+def test_github_adapter_lightweight_mode_requires_explicit_org() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/app/installations/1/access_tokens":
+            return _json_response({"token": "inst-token", "expires_at": "2099-01-01T00:00:00Z"})
+        raise AssertionError(f"unexpected request {request.method} {path}")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler), base_url="https://api.github.com")
+    adapter = GitHubAppAdapter(
+        app_id="123",
+        private_key_pem="unused",
+        installation_ids=(1,),
+        client=client,
+    )
+    adapter._build_app_jwt = lambda: "app-jwt"  # type: ignore[method-assign]
+    route = RouteConfig(name="default", org_pattern="ac*", repo_pattern="*", channel="C1")
+    with pytest.raises(RuntimeError, match="requires an explicit org_pattern"):
+        adapter.list_pull_requests(route, include_enrichment=False)
 
 
 def test_github_adapter_raises_rate_limit_error() -> None:
@@ -260,7 +272,7 @@ def test_github_adapter_raises_rate_limit_error() -> None:
         path = request.url.path
         if path == "/app/installations/1/access_tokens":
             return _json_response({"token": "inst-token", "expires_at": "2099-01-01T00:00:00Z"})
-        if path == "/installation/repositories":
+        if path == "/search/issues":
             return httpx.Response(
                 status_code=403,
                 headers={"x-ratelimit-reset": "200"},
@@ -288,14 +300,14 @@ def test_github_adapter_proactively_uses_rate_limit_headers_on_success() -> None
         path = request.url.path
         if path == "/app/installations/1/access_tokens":
             return _json_response({"token": "inst-token", "expires_at": "2099-01-01T00:00:00Z"})
-        if path == "/installation/repositories":
+        if path == "/search/issues":
             return httpx.Response(
                 status_code=200,
                 headers={
                     "x-ratelimit-remaining": "0",
                     "x-ratelimit-reset": "300",
                 },
-                json={"repositories": []},
+                json={"items": []},
             )
         raise AssertionError(f"unexpected request {request.method} {path}")
 

@@ -5,6 +5,7 @@ import json
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from urllib.parse import quote_plus
 from typing import Any
 
 import httpx
@@ -242,6 +243,59 @@ class GitHubAppAdapter:
             return None
         return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
 
+    @staticmethod
+    def _format_github_search_timestamp(value: datetime) -> str:
+        utc_value = value.astimezone(timezone.utc).replace(microsecond=0)
+        return utc_value.isoformat().replace("+00:00", "Z")
+
+    @staticmethod
+    def _org_repo_from_repository_url(repository_url: str) -> tuple[str, str]:
+        parts = repository_url.rstrip("/").split("/")
+        if len(parts) < 2:
+            raise GitHubApiError(f"Invalid repository_url in search payload: {repository_url}")
+        return parts[-2], parts[-1]
+
+    def _list_pull_requests_org_wide_lightweight(
+        self,
+        route: RouteConfig,
+        *,
+        updated_after: datetime | None,
+    ) -> list[PullRequestSnapshot]:
+        if any(ch in route.org_pattern for ch in "*?[]"):
+            raise GitHubApiError("Lightweight mode requires an explicit org_pattern for org-wide search")
+        installation_id = self.installation_ids[0]
+        token = self._installation_token(installation_id)
+        qualifiers = [f"org:{route.org_pattern}", "is:pr", "is:open"]
+        if updated_after is not None:
+            qualifiers.append(f"updated:>={self._format_github_search_timestamp(updated_after)}")
+        query = " ".join(qualifiers)
+        encoded_query = quote_plus(query)
+        payload = self._request(
+            "GET",
+            f"/search/issues?q={encoded_query}&sort=updated&order=desc&per_page=100&page=1",
+            token=token,
+        )
+
+        snapshots: list[PullRequestSnapshot] = []
+        for item in payload.get("items", []):
+            org, repo = self._org_repo_from_repository_url(str(item.get("repository_url", "")))
+            state_value = str(item.get("state", "open"))
+            snapshot_payload = {
+                "number": int(item["number"]),
+                "title": str(item.get("title", "")),
+                "html_url": str(item.get("html_url", "")),
+                "state": state_value,
+                "merged_at": None,
+                "user": {"login": str(item.get("user", {}).get("login", ""))},
+                "head": {"sha": ""},
+                "updated_at": item.get("updated_at"),
+                "base": {"ref": "main"},
+                "requested_reviewers": [],
+                "labels": item.get("labels", []),
+            }
+            snapshots.append(self._snapshot_from_payload(snapshot_payload, org=org, repo=repo))
+        return snapshots
+
     def _snapshot_from_payload(
         self,
         payload: dict[str, Any],
@@ -275,6 +329,9 @@ class GitHubAppAdapter:
         include_enrichment: bool = True,
         updated_after: datetime | None = None,
     ) -> list[PullRequestSnapshot]:
+        if not include_enrichment and self.installation_ids:
+            return self._list_pull_requests_org_wide_lightweight(route, updated_after=updated_after)
+
         snapshots: list[PullRequestSnapshot] = []
         for installation_id, org, repo in self._iter_matching_repositories(route):
             token = self._installation_token(installation_id)
