@@ -42,7 +42,7 @@ def compact_state_label(state: str) -> str:
 
 def _approval_label(state: ApprovalState) -> str:
     return {
-        ApprovalState.NEEDS_REVIEW: "👀 needs review",
+        ApprovalState.NEEDS_REVIEW: ":o: needs review",
         ApprovalState.APPROVED: "✅ approved",
         ApprovalState.CHANGES_REQUESTED: "❌ changes requested",
     }[state]
@@ -51,8 +51,8 @@ def _approval_label(state: ApprovalState) -> str:
 def _checks_label(state: ChecksState) -> str:
     return {
         ChecksState.NO_CHECKS: "⚪ no checks",
-        ChecksState.PENDING: "🕒 pending",
-        ChecksState.RUNNING: "🏃 running",
+        ChecksState.PENDING: ":grey_exclamation: pending",
+        ChecksState.RUNNING: ":large_yellow_circle: running",
         ChecksState.FAILED: "❌ failed",
         ChecksState.PASSED: "✅ passed",
     }[state]
