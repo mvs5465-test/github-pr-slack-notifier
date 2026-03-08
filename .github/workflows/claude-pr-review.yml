@@ -7,6 +7,5 @@ on:
 jobs:
   review:
     uses: mvs5465-test/.github/.github/workflows/claude-pr-review.yml@main
-    secrets:
-      anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+    secrets: inherit
 
