@@ -12,4 +12,9 @@ jobs:
     permissions:
       contents: read
       packages: write
+    with:
+      image_name: mvs5465-test/github-pr-slack-notifier
+      tags: |
+        type=ref,event=branch
+        type=sha,prefix=sha-
     uses: mvs5465-test/.github/.github/workflows/docker-build.yml@main
