@@ -86,7 +86,7 @@ def run_forever() -> None:
     log = logging.getLogger(__name__)
     loop_resources = _loop_resources(settings)
 
-    def run_loop(loop_name: str, fn: Callable[[], int]) -> int:
+    def run_loop(loop_name: str, fn: Callable[[], int]) -> int | None:
         started_loop = time.monotonic()
         now_epoch = time.time()
         required = loop_resources.get(loop_name, {"core", "search"})
@@ -100,7 +100,7 @@ def run_forever() -> None:
                 retry_seconds,
             )
             observe_reconcile_loop(loop_name, "blocked", time.monotonic() - started_loop, 0)
-            return 0
+            return None
         try:
             items = fn()
             observe_reconcile_loop(loop_name, "ok", time.monotonic() - started_loop, items)
@@ -124,7 +124,7 @@ def run_forever() -> None:
                 retry_seconds,
             )
             observe_reconcile_loop(loop_name, "rate_limited", time.monotonic() - started_loop, 0)
-            return 0
+            return None
         except Exception:
             observe_reconcile_loop(loop_name, "error", time.monotonic() - started_loop, 0)
             raise
@@ -133,8 +133,18 @@ def run_forever() -> None:
         started = time.monotonic()
         with tracer.start_as_current_span("reconcile_cycle"):
             try:
-                run_loop("lightweight", engine.refresh_lightweight)
+                lightweight_items = run_loop("lightweight", engine.refresh_lightweight) or 0
                 now = time.monotonic()
+                if lightweight_items > 0 and now < next_deep_at:
+                    log.info(
+                        "reconcile.deep_fast_path pending_items=%s next_deep_in_seconds=%.3f",
+                        lightweight_items,
+                        max(next_deep_at - now, 0.0),
+                    )
+                    deep_items = run_loop("deep", engine.reconcile_changed)
+                    if deep_items is not None:
+                        next_deep_at = time.monotonic() + settings.deep_reconcile_interval_seconds
+                    now = time.monotonic()
                 if now >= next_deep_at:
                     run_loop("deep", engine.reconcile_changed)
                     next_deep_at = now + settings.deep_reconcile_interval_seconds
