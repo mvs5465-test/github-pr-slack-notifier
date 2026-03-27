@@ -10,6 +10,9 @@ on:
 jobs:
   build:
     permissions:
-      contents: read
+      contents: write
       packages: write
+    secrets: inherit
+    with:
+      promote_argocd_source: true
     uses: mvs5465-test/.github/.github/workflows/docker-build.yml@main
