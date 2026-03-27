@@ -4,5 +4,5 @@ helm:
     value: ghcr.io/mvs5465-test/github-pr-slack-notifier
     forcestring: true
   - name: image.tag
-    value: main@sha256:b724595728a0f2f952314521d374a1f68dcc2da149b0847a085a0ab867418c8c
+    value: main@sha256:eded54a17f8a1afeaac2cf481bb6dc7382019c7b8e2b38e6bb4e6989dfee491d
     forcestring: true
